@@ -5,200 +5,15 @@ import WebSocket, { WebSocketServer } from "ws";
 import { createServer as createHttpServer } from "http";
 import { Socket } from "net";
 import readline from "readline";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import fs from "fs";
+import { generateJWTSecret, generateJWT, generateJWTWithConfig, verifyJWTWithPayload, hasRequiredRoles, JWTConfig, JWTPayload } from "./auth.js";
+import { loadPermissionsConfig, parseMCPMessage, isMethodAllowed, createErrorResponse, createMessageFilter, PermissionsConfig, MCPMessage } from "./permissions.js";
+import { log, calculateBackoffDelay } from "./utils.js";
+import { Options } from "./types.js";
 
-interface Options {
-  protocol: "tcp" | "ws";
-  port: number;
-  command: string;
-  args: string[];
-  debug?: boolean;
-  mode: "server" | "client";
-  host?: string; // for client mode
-  autoReconnect?: boolean; // for client mode
-  maxReconnectAttempts?: number; // for client mode
-  reconnectDelay?: number; // initial delay in ms
-  jwtSecret?: string; // JWT secret for authentication
-  jwtToken?: string; // JWT token for client authentication
-  requiredRoles?: string[]; // Required roles for server access
-  permissionsConfig?: string; // Path to permissions configuration file
-}
 
-interface JWTConfig {
-  secret: string;
-  expiresIn?: string;
-  user?: string;
-  roles?: string[];
-  customClaims?: Record<string, any>;
-}
 
-interface JWTPayload {
-  user?: string;
-  roles?: string[];
-  iat: number;
-  exp: number;
-  [key: string]: any;
-}
 
-interface RolePermissions {
-  allowedMethods: string[];
-  blockedMethods: string[];
-  allowedParams?: Record<string, string[]>;
-  blockedParams?: Record<string, string[]>;
-}
-
-interface PermissionsConfig {
-  permissions: Record<string, RolePermissions>;
-}
-
-interface MCPMessage {
-  jsonrpc: string;
-  id?: string | number;
-  method?: string;
-  params?: any;
-  result?: any;
-  error?: any;
-}
-
-function log(...args: any[]) {
-  if (process.env.DEBUG === "true") console.log("[mcp-remote]", ...args);
-}
-
-function generateJWTSecret(bits: number = 256): string {
-  const bytes = bits / 8;
-  return crypto.randomBytes(bytes).toString('base64url');
-}
-
-function generateJWT(secret: string): string {
-  return jwt.sign({ iat: Date.now() }, secret, { expiresIn: "1h" });
-}
-
-function generateJWTWithConfig(config: JWTConfig): string {
-  const payload: any = {
-    ...(config.user && { user: config.user }),
-    ...(config.roles && { roles: config.roles }),
-    ...config.customClaims
-  };
-
-  const options: jwt.SignOptions = {
-    expiresIn: config.expiresIn || "1h"
-  } as jwt.SignOptions;
-
-  return jwt.sign(payload, config.secret, options);
-}
-
-function verifyJWT(token: string, secret: string): boolean {
-  try {
-    jwt.verify(token, secret);
-    return true;
-  } catch (error) {
-    log("JWT verification failed:", error);
-    return false;
-  }
-}
-
-function verifyJWTWithPayload(token: string, secret: string): { valid: boolean; payload?: JWTPayload } {
-  try {
-    const decoded = jwt.verify(token, secret) as JWTPayload;
-    return { valid: true, payload: decoded };
-  } catch (error) {
-    log("JWT verification failed:", error);
-    return { valid: false };
-  }
-}
-
-function hasRequiredRoles(userRoles: string[] | undefined, requiredRoles: string[]): boolean {
-  if (requiredRoles.length === 0) return true;
-  if (!userRoles || userRoles.length === 0) return false;
-  
-  return requiredRoles.some(role => userRoles.includes(role));
-}
-
-function loadPermissionsConfig(configPath: string): PermissionsConfig | null {
-  try {
-    const configData = fs.readFileSync(configPath, 'utf-8');
-    return JSON.parse(configData) as PermissionsConfig;
-  } catch (error) {
-    log("Failed to load permissions config:", error);
-    return null;
-  }
-}
-
-function parseMCPMessage(data: string): MCPMessage | null {
-  try {
-    const lines = data.split('\n').filter(line => line.trim());
-    for (const line of lines) {
-      try {
-        const message = JSON.parse(line) as MCPMessage;
-        if (message.jsonrpc === "2.0") {
-          return message;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  } catch (error) {
-    log("Failed to parse MCP message:", error);
-    return null;
-  }
-}
-
-function isMethodAllowed(method: string, userRoles: string[], permissionsConfig: PermissionsConfig): boolean {
-  if (!userRoles || userRoles.length === 0) return false;
-  
-  for (const role of userRoles) {
-    const rolePerms = permissionsConfig.permissions[role];
-    if (!rolePerms) continue;
-    
-    // Check if method is explicitly blocked
-    if (rolePerms.blockedMethods.includes(method) || rolePerms.blockedMethods.includes("*")) {
-      return false;
-    }
-    
-    // Check if method is explicitly allowed or wildcard allowed
-    if (rolePerms.allowedMethods.includes(method) || rolePerms.allowedMethods.includes("*")) {
-      return true;
-    }
-  }
-  
-  return false;
-}
-
-function createErrorResponse(id: string | number | undefined, message: string): string {
-  const errorResponse = {
-    jsonrpc: "2.0",
-    id: id || null,
-    error: {
-      code: -32601,
-      message: `Method not allowed: ${message}`
-    }
-  };
-  return JSON.stringify(errorResponse) + '\n';
-}
-
-function createMessageFilter(userRoles: string[], permissionsConfig: PermissionsConfig | null) {
-  return (data: Buffer): { allowed: boolean; response?: string; filteredData?: Buffer } => {
-    if (!permissionsConfig) {
-      return { allowed: true, filteredData: data };
-    }
-
-    const message = parseMCPMessage(data.toString());
-    if (!message || !message.method) {
-      return { allowed: true, filteredData: data };
-    }
-
-    if (!isMethodAllowed(message.method, userRoles, permissionsConfig)) {
-      log(`Blocked method '${message.method}' for user with roles: ${userRoles.join(",")}`);
-      const errorResponse = createErrorResponse(message.id, `Access denied for method '${message.method}'`);
-      return { allowed: false, response: errorResponse };
-    }
-
-    return { allowed: true, filteredData: data };
-  };
-}
 
 function startServer(options: Options) {
   const proc = spawn(options.command, options.args, { stdio: "pipe" });
@@ -322,7 +137,10 @@ function startServer(options: Options) {
         });
       } else {
         const stdoutListener = (data: Buffer) => ws.send(data);
-        const messageListener = (msg: WebSocket.RawData) => proc.stdin?.write(msg);
+        const messageListener = (msg: WebSocket.RawData) => {
+          const data = Buffer.isBuffer(msg) ? msg : Buffer.from(msg.toString());
+          proc.stdin?.write(data);
+        };
 
         proc.stdout?.on("data", stdoutListener);
         ws.on("message", messageListener);
@@ -350,8 +168,8 @@ function startClient(options: Options) {
   let isConnected = false;
   let shouldReconnect = true;
 
-  function calculateBackoffDelay(attempt: number): number {
-    return Math.min(currentDelay * Math.pow(2, attempt), 30000);
+  function calculateCurrentBackoffDelay(attempt: number): number {
+    return calculateBackoffDelay(attempt, currentDelay);
   }
 
   function connectTcp(): net.Socket {
@@ -400,7 +218,7 @@ function startClient(options: Options) {
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
-        const delay = calculateBackoffDelay(reconnectAttempts);
+        const delay = calculateCurrentBackoffDelay(reconnectAttempts);
         console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {
@@ -469,7 +287,7 @@ function startClient(options: Options) {
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
-        const delay = calculateBackoffDelay(reconnectAttempts);
+        const delay = calculateCurrentBackoffDelay(reconnectAttempts);
         console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {

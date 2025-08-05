@@ -9,7 +9,13 @@
   "main": "bin/mcp-remote.js",
   "scripts": {
     "build": "tsc",
-    "start": "node bin/mcp-remote.js"
+    "start": "node bin/mcp-remote.js",
+    "test": "jest --config=jest.config.cjs",
+    "test:watch": "jest --config=jest.config.cjs --watch",
+    "test:coverage": "jest --config=jest.config.cjs --coverage",
+    "test:unit": "jest --config=jest.config.cjs --testPathIgnorePatterns='integration.test.ts'",
+    "test:integration": "jest --config=jest.config.cjs --testPathPatterns=integration.test.ts",
+    "pretest": "npm run build"
   },
   "keywords": [
     "mcp",
@@ -27,8 +33,14 @@
     "ws": "^8.16.0"
   },
   "devDependencies": {
+    "@jest/globals": "^30.0.5",
+    "@modelcontextprotocol/server-filesystem": "^2025.7.29",
+    "@types/jest": "^30.0.0",
     "@types/node": "^24.2.0",
     "@types/ws": "^8.18.1",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.1",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   }
 }

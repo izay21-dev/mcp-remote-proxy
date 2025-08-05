@@ -4,13 +4,14 @@ A TypeScript CLI tool that creates a proxy for MCP (Model Context Protocol) serv
 
 ## Features
 
-- **Protocol Support**: TCP and WebSocket protocols
+- **Protocol Support**: TCP and WebSocket protocols with full MCP compliance
 - **JWT Authentication**: Secure token-based authentication
 - **Role-Based Access Control**: Fine-grained permissions for different user types
 - **Auto-Reconnection**: Client auto-reconnect with exponential backoff
 - **JWT Token Management**: Built-in secret generation and token creation tools
 - **Request Filtering**: Method-level access control based on user roles
 - **Audit Logging**: Debug logging for security events and blocked requests
+- **MCP Protocol Compliance**: Supports newline-delimited JSON as per MCP specification
 
 ## Installation
 
@@ -268,6 +269,35 @@ npm start        # Run the compiled binary
 tsc             # Direct TypeScript compilation
 ```
 
+### Testing
+
+The project has comprehensive test coverage with both unit and integration tests:
+
+```bash
+npm test                    # Run all tests (99 tests)
+npm run test:unit          # Run unit tests only
+npm run test:integration   # Run integration tests only
+npm run test:coverage      # Run tests with coverage report
+```
+
+**Test Coverage**:
+- **Overall**: 20.85% statement coverage
+- **Auth Module**: 100% coverage (JWT operations, role validation)
+- **Permissions Module**: 97.72% coverage (access control, message filtering)
+- **Utils Module**: 100% coverage (logging, validation, argument parsing)
+
+**Unit Tests** (63 tests):
+- `auth-unit.test.ts` - JWT generation, verification, role checking
+- `permissions-unit.test.ts` - Permission loading, method filtering, error responses
+- `utils-unit.test.ts` - Utility functions, validation, backoff calculations
+
+**Integration Tests** (36 tests):
+- TCP and WebSocket proxy functionality
+- JWT authentication and authorization flows
+- Error handling and edge cases
+- MCP protocol compliance
+- Real server-client interactions
+
 ### Debug Mode
 
 Enable debug logging:
@@ -284,10 +314,16 @@ This will log:
 
 ### Architecture
 
-- **Single File**: All functionality in `src/mcp-remote.ts`
+The codebase follows a modular architecture for maintainability and testability:
+
+- **Main Entry Point**: `src/mcp-remote.ts` - CLI orchestration and server/client logic
+- **Auth Module**: `src/auth.ts` - JWT token generation, verification, and role validation
+- **Permissions Module**: `src/permissions.ts` - Permission checking, MCP message parsing, and access control
+- **Utils Module**: `src/utils.ts` - Utility functions for logging, argument parsing, and validation
+- **Types Module**: `src/types.ts` - Shared TypeScript interfaces and type definitions
 - **ES Modules**: Modern JavaScript module system
-- **TypeScript**: Compiled to `bin/mcp-remote.js`
-- **Dependencies**: `ws` for WebSocket, `jsonwebtoken` for JWT
+- **TypeScript**: All modules compiled to `bin/` directory
+- **Dependencies**: `ws` for WebSocket, `jsonwebtoken` for JWT, `crypto` for secure random generation
 
 ## Security Features
 
