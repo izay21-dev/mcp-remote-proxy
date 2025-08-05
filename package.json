@@ -1,0 +1,32 @@
+{
+  "name": "mcp-remote-proxy",
+  "version": "1.0.0",
+  "description": "Expose MCP servers over TCP or WebSocket",
+  "bin": {
+    "mcp-remote": "bin/mcp-remote.js"
+  },
+  "type": "module",
+  "main": "bin/mcp-remote.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node bin/mcp-remote.js"
+  },
+  "keywords": [
+    "mcp",
+    "proxy",
+    "tcp",
+    "websocket",
+    "remote",
+    "cli"
+  ],
+  "author": "izay21.dev",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.4.5"
+  }
+}
