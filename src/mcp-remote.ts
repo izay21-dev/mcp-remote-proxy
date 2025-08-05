@@ -5,6 +5,9 @@ import WebSocket, { WebSocketServer } from "ws";
 import { createServer as createHttpServer } from "http";
 import { Socket } from "net";
 import readline from "readline";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import fs from "fs";
 
 interface Options {
   protocol: "tcp" | "ws";
@@ -17,14 +20,198 @@ interface Options {
   autoReconnect?: boolean; // for client mode
   maxReconnectAttempts?: number; // for client mode
   reconnectDelay?: number; // initial delay in ms
+  jwtSecret?: string; // JWT secret for authentication
+  jwtToken?: string; // JWT token for client authentication
+  requiredRoles?: string[]; // Required roles for server access
+  permissionsConfig?: string; // Path to permissions configuration file
+}
+
+interface JWTConfig {
+  secret: string;
+  expiresIn?: string;
+  user?: string;
+  roles?: string[];
+  customClaims?: Record<string, any>;
+}
+
+interface JWTPayload {
+  user?: string;
+  roles?: string[];
+  iat: number;
+  exp: number;
+  [key: string]: any;
+}
+
+interface RolePermissions {
+  allowedMethods: string[];
+  blockedMethods: string[];
+  allowedParams?: Record<string, string[]>;
+  blockedParams?: Record<string, string[]>;
+}
+
+interface PermissionsConfig {
+  permissions: Record<string, RolePermissions>;
+}
+
+interface MCPMessage {
+  jsonrpc: string;
+  id?: string | number;
+  method?: string;
+  params?: any;
+  result?: any;
+  error?: any;
 }
 
 function log(...args: any[]) {
   if (process.env.DEBUG === "true") console.log("[mcp-remote]", ...args);
 }
 
+function generateJWTSecret(bits: number = 256): string {
+  const bytes = bits / 8;
+  return crypto.randomBytes(bytes).toString('base64url');
+}
+
+function generateJWT(secret: string): string {
+  return jwt.sign({ iat: Date.now() }, secret, { expiresIn: "1h" });
+}
+
+function generateJWTWithConfig(config: JWTConfig): string {
+  const payload: any = {
+    ...(config.user && { user: config.user }),
+    ...(config.roles && { roles: config.roles }),
+    ...config.customClaims
+  };
+
+  const options: jwt.SignOptions = {
+    expiresIn: config.expiresIn || "1h"
+  } as jwt.SignOptions;
+
+  return jwt.sign(payload, config.secret, options);
+}
+
+function verifyJWT(token: string, secret: string): boolean {
+  try {
+    jwt.verify(token, secret);
+    return true;
+  } catch (error) {
+    log("JWT verification failed:", error);
+    return false;
+  }
+}
+
+function verifyJWTWithPayload(token: string, secret: string): { valid: boolean; payload?: JWTPayload } {
+  try {
+    const decoded = jwt.verify(token, secret) as JWTPayload;
+    return { valid: true, payload: decoded };
+  } catch (error) {
+    log("JWT verification failed:", error);
+    return { valid: false };
+  }
+}
+
+function hasRequiredRoles(userRoles: string[] | undefined, requiredRoles: string[]): boolean {
+  if (requiredRoles.length === 0) return true;
+  if (!userRoles || userRoles.length === 0) return false;
+  
+  return requiredRoles.some(role => userRoles.includes(role));
+}
+
+function loadPermissionsConfig(configPath: string): PermissionsConfig | null {
+  try {
+    const configData = fs.readFileSync(configPath, 'utf-8');
+    return JSON.parse(configData) as PermissionsConfig;
+  } catch (error) {
+    log("Failed to load permissions config:", error);
+    return null;
+  }
+}
+
+function parseMCPMessage(data: string): MCPMessage | null {
+  try {
+    const lines = data.split('\n').filter(line => line.trim());
+    for (const line of lines) {
+      try {
+        const message = JSON.parse(line) as MCPMessage;
+        if (message.jsonrpc === "2.0") {
+          return message;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch (error) {
+    log("Failed to parse MCP message:", error);
+    return null;
+  }
+}
+
+function isMethodAllowed(method: string, userRoles: string[], permissionsConfig: PermissionsConfig): boolean {
+  if (!userRoles || userRoles.length === 0) return false;
+  
+  for (const role of userRoles) {
+    const rolePerms = permissionsConfig.permissions[role];
+    if (!rolePerms) continue;
+    
+    // Check if method is explicitly blocked
+    if (rolePerms.blockedMethods.includes(method) || rolePerms.blockedMethods.includes("*")) {
+      return false;
+    }
+    
+    // Check if method is explicitly allowed or wildcard allowed
+    if (rolePerms.allowedMethods.includes(method) || rolePerms.allowedMethods.includes("*")) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function createErrorResponse(id: string | number | undefined, message: string): string {
+  const errorResponse = {
+    jsonrpc: "2.0",
+    id: id || null,
+    error: {
+      code: -32601,
+      message: `Method not allowed: ${message}`
+    }
+  };
+  return JSON.stringify(errorResponse) + '\n';
+}
+
+function createMessageFilter(userRoles: string[], permissionsConfig: PermissionsConfig | null) {
+  return (data: Buffer): { allowed: boolean; response?: string; filteredData?: Buffer } => {
+    if (!permissionsConfig) {
+      return { allowed: true, filteredData: data };
+    }
+
+    const message = parseMCPMessage(data.toString());
+    if (!message || !message.method) {
+      return { allowed: true, filteredData: data };
+    }
+
+    if (!isMethodAllowed(message.method, userRoles, permissionsConfig)) {
+      log(`Blocked method '${message.method}' for user with roles: ${userRoles.join(",")}`);
+      const errorResponse = createErrorResponse(message.id, `Access denied for method '${message.method}'`);
+      return { allowed: false, response: errorResponse };
+    }
+
+    return { allowed: true, filteredData: data };
+  };
+}
+
 function startServer(options: Options) {
   const proc = spawn(options.command, options.args, { stdio: "pipe" });
+  let permissionsConfig: PermissionsConfig | null = null;
+
+  if (options.permissionsConfig) {
+    permissionsConfig = loadPermissionsConfig(options.permissionsConfig);
+    if (!permissionsConfig) {
+      console.error("Failed to load permissions configuration. Exiting.");
+      process.exit(1);
+    }
+    log("Loaded permissions configuration");
+  }
 
   proc.on("error", (err) => {
     console.error("Failed to start MCP server:", err);
@@ -38,8 +225,45 @@ function startServer(options: Options) {
   if (options.protocol === "tcp") {
     const server = net.createServer((socket) => {
       log("TCP client connected");
-      proc.stdout?.pipe(socket);
-      socket.pipe(proc.stdin!);
+      
+      if (options.jwtSecret) {
+        // Wait for JWT token from client
+        socket.once("data", (data) => {
+          const token = data.toString().trim();
+          const { valid, payload } = verifyJWTWithPayload(token, options.jwtSecret!);
+          if (valid && payload) {
+            if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
+              log(`TCP client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
+              socket.write("AUTH_INSUFFICIENT_ROLES\n");
+              socket.end();
+              return;
+            }
+            log(`TCP client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
+            socket.write("AUTH_SUCCESS\n");
+            
+            const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
+            
+            proc.stdout?.pipe(socket);
+            
+            // Filter client messages to server
+            socket.on("data", (data) => {
+              const result = messageFilter(data);
+              if (result.allowed && result.filteredData) {
+                proc.stdin?.write(result.filteredData);
+              } else if (result.response) {
+                socket.write(result.response);
+              }
+            });
+          } else {
+            log("TCP client authentication failed");
+            socket.write("AUTH_FAILED\n");
+            socket.end();
+          }
+        });
+      } else {
+        proc.stdout?.pipe(socket);
+        socket.pipe(proc.stdin!);
+      }
 
       socket.on("close", () => {
         log("TCP client disconnected");
@@ -56,17 +280,59 @@ function startServer(options: Options) {
     wss.on("connection", (ws) => {
       log("WebSocket client connected");
 
-      const stdoutListener = (data: Buffer) => ws.send(data);
-      const messageListener = (msg: WebSocket.RawData) => proc.stdin?.write(msg);
+      if (options.jwtSecret) {
+        ws.once("message", (msg) => {
+          const token = msg.toString().trim();
+          const { valid, payload } = verifyJWTWithPayload(token, options.jwtSecret!);
+          if (valid && payload) {
+            if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
+              log(`WebSocket client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
+              ws.send("AUTH_INSUFFICIENT_ROLES");
+              ws.close();
+              return;
+            }
+            log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
+            ws.send("AUTH_SUCCESS");
+            
+            const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
+            const stdoutListener = (data: Buffer) => ws.send(data);
+            
+            proc.stdout?.on("data", stdoutListener);
+            
+            // Filter client messages to server
+            ws.on("message", (msg) => {
+              const data = Buffer.from(msg.toString());
+              const result = messageFilter(data);
+              if (result.allowed && result.filteredData) {
+                proc.stdin?.write(result.filteredData);
+              } else if (result.response) {
+                ws.send(result.response);
+              }
+            });
 
-      proc.stdout?.on("data", stdoutListener);
-      ws.on("message", messageListener);
+            ws.on("close", () => {
+              log("WebSocket client disconnected");
+              proc.stdout?.off("data", stdoutListener);
+            });
+          } else {
+            log("WebSocket client authentication failed");
+            ws.send("AUTH_FAILED");
+            ws.close();
+          }
+        });
+      } else {
+        const stdoutListener = (data: Buffer) => ws.send(data);
+        const messageListener = (msg: WebSocket.RawData) => proc.stdin?.write(msg);
 
-      ws.on("close", () => {
-        log("WebSocket client disconnected");
-        proc.stdout?.off("data", stdoutListener);
-        ws.off("message", messageListener);
-      });
+        proc.stdout?.on("data", stdoutListener);
+        ws.on("message", messageListener);
+
+        ws.on("close", () => {
+          log("WebSocket client disconnected");
+          proc.stdout?.off("data", stdoutListener);
+          ws.off("message", messageListener);
+        });
+      }
     });
 
     httpServer.listen(options.port, () => {
@@ -93,9 +359,27 @@ function startClient(options: Options) {
     
     socket.on("connect", () => {
       console.log(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);
-      isConnected = true;
-      reconnectAttempts = 0;
-      currentDelay = options.reconnectDelay || 1000;
+      
+      if (options.jwtToken) {
+        socket.write(options.jwtToken + "\n");
+        socket.once("data", (data) => {
+          const response = data.toString().trim();
+          if (response === "AUTH_SUCCESS") {
+            log("TCP authentication successful");
+            isConnected = true;
+            reconnectAttempts = 0;
+            currentDelay = options.reconnectDelay || 1000;
+          } else {
+            console.error("TCP authentication failed");
+            socket.end();
+            return;
+          }
+        });
+      } else {
+        isConnected = true;
+        reconnectAttempts = 0;
+        currentDelay = options.reconnectDelay || 1000;
+      }
     });
 
     socket.on("data", (data) => {
@@ -144,9 +428,27 @@ function startClient(options: Options) {
 
     ws.on("open", () => {
       console.log(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
-      isConnected = true;
-      reconnectAttempts = 0;
-      currentDelay = options.reconnectDelay || 1000;
+      
+      if (options.jwtToken) {
+        ws.send(options.jwtToken);
+        ws.once("message", (msg) => {
+          const response = msg.toString().trim();
+          if (response === "AUTH_SUCCESS") {
+            log("WebSocket authentication successful");
+            isConnected = true;
+            reconnectAttempts = 0;
+            currentDelay = options.reconnectDelay || 1000;
+          } else {
+            console.error("WebSocket authentication failed");
+            ws.close();
+            return;
+          }
+        });
+      } else {
+        isConnected = true;
+        reconnectAttempts = 0;
+        currentDelay = options.reconnectDelay || 1000;
+      }
     });
 
     ws.on("message", (msg) => {
@@ -204,11 +506,295 @@ function startClient(options: Options) {
   });
 }
 
+function handleGenerateSecret(args: string[]) {
+  const bitsIndex = args.indexOf("--bits");
+  const bits = bitsIndex !== -1 ? parseInt(args[bitsIndex + 1], 10) : 256;
+  
+  if (![128, 256, 512].includes(bits)) {
+    console.error("Invalid bits value. Use 128, 256, or 512.");
+    process.exit(1);
+  }
+  
+  const secret = generateJWTSecret(bits);
+  console.log(`Generated JWT secret (${bits}-bit):`);
+  console.log(secret);
+  process.exit(0);
+}
+
+function handleGenerateToken(args: string[]) {
+  const secretIndex = args.indexOf("--jwt-secret");
+  const autoSecretIndex = args.indexOf("--auto-secret");
+  const userIndex = args.indexOf("--user");
+  const rolesIndex = args.indexOf("--roles");
+  const expiresIndex = args.indexOf("--expires-in");
+  
+  if (secretIndex === -1 && autoSecretIndex === -1) {
+    console.error("Must provide either --jwt-secret <secret> or --auto-secret");
+    process.exit(1);
+  }
+  
+  let secret: string;
+  if (autoSecretIndex !== -1) {
+    secret = generateJWTSecret(256);
+    console.log("Generated secret:", secret);
+  } else {
+    secret = args[secretIndex + 1];
+  }
+  
+  const config: JWTConfig = {
+    secret,
+    user: userIndex !== -1 ? args[userIndex + 1] : undefined,
+    roles: rolesIndex !== -1 ? args[rolesIndex + 1].split(",") : undefined,
+    expiresIn: expiresIndex !== -1 ? args[expiresIndex + 1] : "1h"
+  };
+  
+  const token = generateJWTWithConfig(config);
+  console.log(`Generated JWT token:`);
+  console.log(token);
+  
+  // Display token info
+  const { payload } = verifyJWTWithPayload(token, secret);
+  if (payload) {
+    console.log(`\nToken details:`);
+    console.log(`- User: ${payload.user || "none"}`);
+    console.log(`- Roles: ${payload.roles ? payload.roles.join(", ") : "none"}`);
+    console.log(`- Expires: ${new Date(payload.exp * 1000).toISOString()}`);
+  }
+  
+  process.exit(0);
+}
+
+async function handleGeneratePermissions(args: string[]) {
+  const outputIndex = args.indexOf("--output");
+  const sepIndex = args.indexOf("--");
+  
+  if (sepIndex === -1) {
+    console.error("Must provide MCP server command after --. Usage: mcp-remote generate-permissions [--output <file>] -- <command> [args...]");
+    process.exit(1);
+  }
+  
+  const outputFile = outputIndex !== -1 ? args[outputIndex + 1] : "permissions.json";
+  const command = args[sepIndex + 1];
+  const cmdArgs = args.slice(sepIndex + 2);
+  
+  if (!command) {
+    console.error("Must provide MCP server command after --");
+    process.exit(1);
+  }
+  
+  console.log(`Discovering methods from MCP server: ${command} ${cmdArgs.join(" ")}`);
+  console.log(`Output file: ${outputFile}`);
+  
+  const discoveredMethods = new Set<string>();
+  let serverReady = false;
+  
+  return new Promise<void>((resolve, reject) => {
+    const proc = spawn(command, cmdArgs, { stdio: "pipe" });
+    let initializationSent = false;
+    
+    proc.on("error", (err) => {
+      console.error("Failed to start MCP server:", err);
+      reject(err);
+    });
+    
+    proc.stderr?.on("data", (data) => {
+      log("Server stderr:", data.toString());
+    });
+    
+    proc.stdout?.on("data", (data) => {
+      const dataStr = data.toString();
+      log("Server response:", dataStr);
+      
+      try {
+        const lines = dataStr.split('\n').filter((line: string) => line.trim());
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          try {
+            const message = JSON.parse(line) as MCPMessage;
+            
+            // Handle initialization response
+            if (message.id === "init" && message.result) {
+              console.log("✓ Server initialization successful");
+              serverReady = true;
+              
+              // Send tools/list request
+              const toolsListRequest = {
+                jsonrpc: "2.0",
+                id: "tools-list",
+                method: "tools/list",
+                params: {}
+              };
+              proc.stdin?.write(JSON.stringify(toolsListRequest) + '\n');
+              discoveredMethods.add("tools/list");
+              
+              // Send resources/list request
+              const resourcesListRequest = {
+                jsonrpc: "2.0",
+                id: "resources-list", 
+                method: "resources/list",
+                params: {}
+              };
+              proc.stdin?.write(JSON.stringify(resourcesListRequest) + '\n');
+              discoveredMethods.add("resources/list");
+              
+              // Send prompts/list request
+              const promptsListRequest = {
+                jsonrpc: "2.0",
+                id: "prompts-list",
+                method: "prompts/list", 
+                params: {}
+              };
+              proc.stdin?.write(JSON.stringify(promptsListRequest) + '\n');
+              discoveredMethods.add("prompts/list");
+            }
+            
+            // Handle tools/list response
+            if (message.id === "tools-list" && message.result) {
+              console.log("✓ Discovered tools/list capability");
+              discoveredMethods.add("tools/call");
+              if (message.result.tools && message.result.tools.length > 0) {
+                console.log(`  Found ${message.result.tools.length} tools`);
+              }
+            }
+            
+            // Handle resources/list response
+            if (message.id === "resources-list" && message.result) {
+              console.log("✓ Discovered resources/list capability");
+              discoveredMethods.add("resources/read");
+              discoveredMethods.add("resources/subscribe");
+              discoveredMethods.add("resources/unsubscribe");
+              if (message.result.resources && message.result.resources.length > 0) {
+                console.log(`  Found ${message.result.resources.length} resources`);
+              }
+            }
+            
+            // Handle prompts/list response  
+            if (message.id === "prompts-list" && message.result) {
+              console.log("✓ Discovered prompts/list capability");
+              discoveredMethods.add("prompts/get");
+              if (message.result.prompts && message.result.prompts.length > 0) {
+                console.log(`  Found ${message.result.prompts.length} prompts`);
+              }
+            }
+            
+            // Check if we've collected enough information
+            if (serverReady && discoveredMethods.size > 0) {
+              // Add standard MCP methods
+              discoveredMethods.add("ping");
+              discoveredMethods.add("initialize");
+              discoveredMethods.add("notifications/initialized");
+              discoveredMethods.add("notifications/cancelled");
+              discoveredMethods.add("notifications/progress");
+              discoveredMethods.add("notifications/message");
+              discoveredMethods.add("notifications/resources/updated");
+              discoveredMethods.add("notifications/resources/list_changed");
+              discoveredMethods.add("notifications/tools/list_changed");
+              discoveredMethods.add("notifications/prompts/list_changed");
+              
+              // Generate permissions config
+              const permissionsConfig: PermissionsConfig = {
+                permissions: {
+                  admin: {
+                    allowedMethods: ["*"],
+                    blockedMethods: []
+                  }
+                }
+              };
+              
+              // Write to file
+              try {
+                fs.writeFileSync(outputFile, JSON.stringify(permissionsConfig, null, 2));
+                console.log(`\n✓ Generated permissions file: ${outputFile}`);
+                console.log(`✓ Discovered ${discoveredMethods.size} methods:`);
+                const sortedMethods = Array.from(discoveredMethods).sort();
+                sortedMethods.forEach(method => console.log(`  - ${method}`));
+                console.log(`\n✓ Created admin role with access to all methods`);
+                
+                proc.kill();
+                resolve();
+              } catch (error) {
+                console.error("Failed to write permissions file:", error);
+                proc.kill();
+                reject(error);
+              }
+            }
+          } catch (parseError) {
+            log("Failed to parse JSON line:", line);
+          }
+        }
+      } catch (error) {
+        log("Error processing server output:", error);
+      }
+      
+      // Send initialization request once the server is ready
+      if (!initializationSent && dataStr.includes("jsonrpc")) {
+        const initRequest = {
+          jsonrpc: "2.0",
+          id: "init",
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+              tools: {},
+              resources: {},
+              prompts: {}
+            },
+            clientInfo: {
+              name: "mcp-remote-permissions-generator",
+              version: "1.0.0"
+            }
+          }
+        };
+        
+        proc.stdin?.write(JSON.stringify(initRequest) + '\n');
+        initializationSent = true;
+        console.log("✓ Sent initialization request");
+      }
+    });
+    
+    proc.on("close", (code) => {
+      if (code !== 0 && code !== null) {
+        console.error(`Server process exited with code ${code}`);
+        reject(new Error(`Server process exited with code ${code}`));
+      }
+    });
+    
+    // Timeout after 10 seconds
+    setTimeout(() => {
+      if (!serverReady || discoveredMethods.size === 0) {
+        console.error("Timeout: Failed to discover methods from server");
+        proc.kill();
+        reject(new Error("Timeout discovering methods"));
+      }
+    }, 10000);
+  });
+}
+
 function parseArgs(): Options {
   const args = process.argv.slice(2);
 
+  // Handle special commands first
+  if (args[0] === "generate-secret") {
+    handleGenerateSecret(args);
+  }
+  
+  if (args[0] === "generate-token") {
+    handleGenerateToken(args);
+  }
+  
+  if (args[0] === "generate-permissions") {
+    // This will be handled asynchronously after parseArgs returns
+    return { mode: "generate-permissions" } as any;
+  }
+
   if (args.length < 2 || (args[0] !== "server" && args[0] !== "client")) {
-    console.error("Usage: mcp-remote <server|client> <tcp|ws> --port <port> [--host <host>] [--auto-reconnect] [--max-attempts <n>] [--reconnect-delay <ms>] -- <command> [args...]");
+    console.error("Usage: mcp-remote <server|client|generate-secret|generate-token|generate-permissions> <tcp|ws> --port <port> [--host <host>] [--auto-reconnect] [--max-attempts <n>] [--reconnect-delay <ms>] [--jwt-secret <secret>] [--jwt-token <token>] [--require-roles <role1,role2>] [--permissions-config <file>] -- <command> [args...]");
+    console.error("\nSpecial commands:");
+    console.error("  generate-secret [--bits <128|256|512>]");
+    console.error("  generate-token --jwt-secret <secret> [--user <user>] [--roles <role1,role2>] [--expires-in <time>]");
+    console.error("  generate-token --auto-secret [--user <user>] [--roles <role1,role2>] [--expires-in <time>]");
+    console.error("  generate-permissions [--output <file>] -- <command> [args...]");
     process.exit(1);
   }
 
@@ -220,10 +806,14 @@ function parseArgs(): Options {
   const autoReconnectIndex = args.indexOf("--auto-reconnect");
   const maxAttemptsIndex = args.indexOf("--max-attempts");
   const reconnectDelayIndex = args.indexOf("--reconnect-delay");
+  const jwtSecretIndex = args.indexOf("--jwt-secret");
+  const jwtTokenIndex = args.indexOf("--jwt-token");
+  const requiredRolesIndex = args.indexOf("--require-roles");
+  const permissionsConfigIndex = args.indexOf("--permissions-config");
   const sepIndex = args.indexOf("--");
 
   if (portIndex === -1 || (mode === "server" && sepIndex === -1)) {
-    console.error("Missing required arguments. Usage: mcp-remote <server|client> <tcp|ws> --port <port> [--host <host>] [--auto-reconnect] [--max-attempts <n>] [--reconnect-delay <ms>] -- <command> [args...]");
+    console.error("Missing required arguments. Usage: mcp-remote <server|client> <tcp|ws> --port <port> [--host <host>] [--auto-reconnect] [--max-attempts <n>] [--reconnect-delay <ms>] [--jwt-secret <secret>] [--jwt-token <token>] [--require-roles <role1,role2>] [--permissions-config <file>] -- <command> [args...]");
     process.exit(1);
   }
 
@@ -232,6 +822,10 @@ function parseArgs(): Options {
   const autoReconnect = autoReconnectIndex !== -1;
   const maxReconnectAttempts = maxAttemptsIndex !== -1 ? parseInt(args[maxAttemptsIndex + 1], 10) : 5;
   const reconnectDelay = reconnectDelayIndex !== -1 ? parseInt(args[reconnectDelayIndex + 1], 10) : 1000;
+  const jwtSecret = jwtSecretIndex !== -1 ? args[jwtSecretIndex + 1] : undefined;
+  const jwtToken = jwtTokenIndex !== -1 ? args[jwtTokenIndex + 1] : undefined;
+  const requiredRoles = requiredRolesIndex !== -1 ? args[requiredRolesIndex + 1].split(",") : undefined;
+  const permissionsConfig = permissionsConfigIndex !== -1 ? args[permissionsConfigIndex + 1] : undefined;
 
   let command = "";
   let cmdArgs: string[] = [];
@@ -251,10 +845,22 @@ function parseArgs(): Options {
     autoReconnect,
     maxReconnectAttempts,
     reconnectDelay,
+    jwtSecret,
+    jwtToken,
+    requiredRoles,
+    permissionsConfig,
   };
 }
 
 const options = parseArgs();
 if (options.mode === "server") startServer(options);
-else startClient(options);
+else if (options.mode === "client") startClient(options);
+else if (options.mode === "generate-permissions") {
+  handleGeneratePermissions(process.argv.slice(2)).then(() => {
+    process.exit(0);
+  }).catch((error) => {
+    console.error("Error generating permissions:", error.message);
+    process.exit(1);
+  });
+}
 

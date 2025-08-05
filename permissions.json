@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "readonly": {
+      "allowedMethods": [
+        "ping",
+        "initialize",
+        "tools/list",
+        "resources/list",
+        "resources/read",
+        "prompts/list",
+        "prompts/get"
+      ],
+      "blockedMethods": [
+        "tools/call",
+        "resources/write",
+        "resources/delete",
+        "notifications/initialized"
+      ]
+    },
+    "user": {
+      "allowedMethods": [
+        "ping",
+        "initialize", 
+        "tools/list",
+        "tools/call",
+        "resources/list",
+        "resources/read",
+        "prompts/list",
+        "prompts/get",
+        "notifications/initialized"
+      ],
+      "blockedMethods": [
+        "resources/write",
+        "resources/delete"
+      ]
+    },
+    "admin": {
+      "allowedMethods": ["*"],
+      "blockedMethods": []
+    }
+  }
+}
