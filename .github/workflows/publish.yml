@@ -1,9 +1,6 @@
 name: Publish Package
 
 on:
-  push:
-    branches:
-      - main
   release:
     types: [published]
 
@@ -40,12 +37,3 @@ jobs:
           provenance: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to GitHub Packages
-        uses: JS-DevTools/npm-publish@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          registry: https://npm.pkg.github.com
-          package: ./package.json
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
