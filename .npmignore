@@ -1,0 +1,31 @@
+# Source files (compiled to bin/)
+src/
+tsconfig.json
+
+# Development and testing
+tests/
+coverage/
+jest.config.cjs
+*.test.ts
+*.test.js
+
+# Development documentation
+CLAUDE.md
+TESTING.md
+
+# Build artifacts and dependencies
+node_modules/
+*.log
+*.tgz
+
+# Git and editor files
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

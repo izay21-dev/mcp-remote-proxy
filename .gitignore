@@ -4,6 +4,9 @@ node_modules/
 # Output build folder
 bin/
 
+# NPM Package builds
+*.tgz
+
 # Logs
 *.log
 npm-debug.log*

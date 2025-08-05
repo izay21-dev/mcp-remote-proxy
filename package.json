@@ -1,5 +1,5 @@
 {
-  "name": "mcp-remote-proxy",
+  "name": "@izay21.dev/mcp-remote-proxy",
   "version": "1.0.0",
   "description": "Expose MCP servers over TCP or WebSocket",
   "bin": {
@@ -15,7 +15,8 @@
     "test:coverage": "jest --config=jest.config.cjs --coverage",
     "test:unit": "jest --config=jest.config.cjs --testPathIgnorePatterns='integration.test.ts'",
     "test:integration": "jest --config=jest.config.cjs --testPathPatterns=integration.test.ts",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
     "mcp",
@@ -27,6 +28,18 @@
   ],
   "author": "izay21.dev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/izay21-dev/mcp-remote-proxy.git"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "permissions.json"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
     "jsonwebtoken": "^9.0.2",

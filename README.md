@@ -334,6 +334,51 @@ The codebase follows a modular architecture for maintainability and testability:
 - **Token Expiration**: Configurable token lifetimes
 - **Secure Secrets**: Cryptographically secure secret generation
 
+## Claude Desktop Integration
+
+To use this MCP Remote Proxy with Claude Desktop:
+
+### 1. Install the Package
+
+```bash
+npm install -g @izay21.dev/mcp-remote-proxy
+```
+
+### 2. Start the Proxy Server
+
+```bash
+# Generate JWT secret and token
+SECRET=$(mcp-remote generate-secret --bits 256)
+TOKEN=$(mcp-remote generate-token --jwt-secret "$SECRET" --user "claude-desktop" --roles "admin" --expires-in "24h" | grep "Generated JWT token:" -A1 | tail -1)
+
+# Start proxy server with your MCP server
+mcp-remote server tcp --port 8080 --jwt-secret "$SECRET" -- npx @modelcontextprotocol/server-filesystem /path/to/files
+```
+
+### 3. Configure Claude Desktop
+
+In your Claude Desktop MCP configuration file, connect to the proxy instead of directly to the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "remote-filesystem": {
+      "command": "mcp-remote",
+      "args": ["client", "tcp", "--port", "8080", "--host", "localhost", "--jwt-token", "your-jwt-token"]
+    }
+  }
+}
+```
+
+Replace `"your-jwt-token"` with the actual token generated in step 2.
+
+### Benefits for Claude Desktop
+
+- **Remote MCP Servers**: Connect Claude Desktop to MCP servers running on different machines
+- **Security**: Add JWT authentication and role-based access control to any MCP server
+- **Network Flexibility**: Use TCP or WebSocket protocols instead of stdio
+- **Access Control**: Limit what Claude Desktop can do with fine-grained permissions
+
 ## License
 
 MIT
