@@ -1,6 +1,6 @@
 {
   "name": "izay21.dev-mcp-remote-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Expose MCP servers over TCP or WebSocket",
   "bin": {
     "mcp-remote": "bin/mcp-remote.js"
