@@ -417,7 +417,26 @@ describe('MCP Remote Proxy Integration Tests', () => {
         });
 
         clientProcess.stderr?.on('data', (data) => {
-          console.log('Client stderr:', data.toString());
+          const output = data.toString();
+          console.log('Client stderr:', output);
+          
+          // Check if client connected successfully
+          if (output.includes('Connected to TCP MCP server at localhost:')) {
+            connected = true;
+            
+            // Send an MCP initialize request via stdin
+            const initRequest = {
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'initialize',
+              params: {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                clientInfo: { name: 'test-client', version: '1.0.0' }
+              }
+            };
+            clientProcess.stdin?.write(JSON.stringify(initRequest) + '\n');
+          }
         });
 
         clientProcess.on('error', (err) => {
@@ -490,7 +509,26 @@ describe('MCP Remote Proxy Integration Tests', () => {
         });
 
         clientProcess.stderr?.on('data', (data) => {
-          console.log('WS Client stderr:', data.toString());
+          const output = data.toString();
+          console.log('WS Client stderr:', output);
+          
+          // Check if client connected successfully
+          if (output.includes('Connected to WebSocket MCP server at localhost:')) {
+            connected = true;
+            
+            // Send an MCP initialize request via stdin
+            const initRequest = {
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'initialize',
+              params: {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                clientInfo: { name: 'test-client', version: '1.0.0' }
+              }
+            };
+            clientProcess.stdin?.write(JSON.stringify(initRequest) + '\n');
+          }
         });
 
         clientProcess.on('error', (err) => {

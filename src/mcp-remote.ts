@@ -177,7 +177,7 @@ function startClient(options: Options) {
     const socket = net.connect(options.port, options.host || "localhost");
     
     socket.on("connect", () => {
-      console.log(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);
+      console.error(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);
       
       if (options.jwtToken) {
         socket.write(options.jwtToken + "\n");
@@ -214,13 +214,13 @@ function startClient(options: Options) {
 
     socket.on("close", () => {
       if (isConnected) {
-        console.log("TCP connection closed");
+        console.error("TCP connection closed");
       }
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
-        console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
+        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {
           reconnectAttempts++;
@@ -246,7 +246,7 @@ function startClient(options: Options) {
     const ws = new WebSocket(`ws://${options.host || "localhost"}:${options.port}`);
 
     ws.on("open", () => {
-      console.log(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
+      console.error(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
       
       if (options.jwtToken) {
         ws.send(options.jwtToken);
@@ -283,13 +283,13 @@ function startClient(options: Options) {
 
     ws.on("close", () => {
       if (isConnected) {
-        console.log("WebSocket connection closed");
+        console.error("WebSocket connection closed");
       }
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
-        console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
+        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {
           reconnectAttempts++;
@@ -319,7 +319,7 @@ function startClient(options: Options) {
 
   process.on("SIGINT", () => {
     shouldReconnect = false;
-    console.log("\nShutting down...");
+    console.error("\nShutting down...");
     rl.close();
     process.exit(0);
   });

@@ -747,7 +747,9 @@
 <a name='L682'></a><a href='#L682'>682</a>
 <a name='L683'></a><a href='#L683'>683</a>
 <a name='L684'></a><a href='#L684'>684</a>
-<a name='L685'></a><a href='#L685'>685</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L685'></a><a href='#L685'>685</a>
+<a name='L686'></a><a href='#L686'>686</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1431,7 +1433,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// mcp-remote.ts
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">#!/usr/bin/env node
+// mcp-remote.ts
 <span class="cstat-no" title="statement not covered" >import { spawn } from "child_process";</span>
 <span class="cstat-no" title="statement not covered" >import net from "net";</span>
 <span class="cstat-no" title="statement not covered" >import WebSocket, { WebSocketServer } from "ws";</span>
@@ -1609,7 +1612,7 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
     const socket = <span class="cstat-no" title="statement not covered" >net.connect(options.port, options.host || "localhost");</span>
     
 <span class="cstat-no" title="statement not covered" >    socket.on("connect", <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
-<span class="cstat-no" title="statement not covered" >      console.log(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);</span>
+<span class="cstat-no" title="statement not covered" >      console.error(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);</span>
       
 <span class="cstat-no" title="statement not covered" >      if (options.jwtToken) {</span>
 <span class="cstat-no" title="statement not covered" >        socket.write(options.jwtToken + "\n");</span>
@@ -1646,13 +1649,13 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    socket.on("close", <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >      if (isConnected) {</span>
-<span class="cstat-no" title="statement not covered" >        console.log("TCP connection closed");</span>
+<span class="cstat-no" title="statement not covered" >        console.error("TCP connection closed");</span>
       }
 <span class="cstat-no" title="statement not covered" >      isConnected = false;</span>
       
 <span class="cstat-no" title="statement not covered" >      if (shouldReconnect &amp;&amp; options.autoReconnect &amp;&amp; reconnectAttempts &lt; (options.maxReconnectAttempts || 5)) {</span>
         const delay = <span class="cstat-no" title="statement not covered" >calculateCurrentBackoffDelay(reconnectAttempts);</span>
-<span class="cstat-no" title="statement not covered" >        console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);</span>
+<span class="cstat-no" title="statement not covered" >        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);</span>
         
 <span class="cstat-no" title="statement not covered" >        setTimeout(<span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >          reconnectAttempts++;</span>
@@ -1678,7 +1681,7 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
     const ws = <span class="cstat-no" title="statement not covered" >new WebSocket(`ws://${options.host || "localhost"}:${options.port}`);</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    ws.on("open", <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
-<span class="cstat-no" title="statement not covered" >      console.log(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);</span>
+<span class="cstat-no" title="statement not covered" >      console.error(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);</span>
       
 <span class="cstat-no" title="statement not covered" >      if (options.jwtToken) {</span>
 <span class="cstat-no" title="statement not covered" >        ws.send(options.jwtToken);</span>
@@ -1715,13 +1718,13 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    ws.on("close", <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >      if (isConnected) {</span>
-<span class="cstat-no" title="statement not covered" >        console.log("WebSocket connection closed");</span>
+<span class="cstat-no" title="statement not covered" >        console.error("WebSocket connection closed");</span>
       }
 <span class="cstat-no" title="statement not covered" >      isConnected = false;</span>
       
 <span class="cstat-no" title="statement not covered" >      if (shouldReconnect &amp;&amp; options.autoReconnect &amp;&amp; reconnectAttempts &lt; (options.maxReconnectAttempts || 5)) {</span>
         const delay = <span class="cstat-no" title="statement not covered" >calculateCurrentBackoffDelay(reconnectAttempts);</span>
-<span class="cstat-no" title="statement not covered" >        console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);</span>
+<span class="cstat-no" title="statement not covered" >        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);</span>
         
 <span class="cstat-no" title="statement not covered" >        setTimeout(<span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >          reconnectAttempts++;</span>
@@ -1751,7 +1754,7 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
 &nbsp;
 <span class="cstat-no" title="statement not covered" >  process.on("SIGINT", <span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
 <span class="cstat-no" title="statement not covered" >    shouldReconnect = false;</span>
-<span class="cstat-no" title="statement not covered" >    console.log("\nShutting down...");</span>
+<span class="cstat-no" title="statement not covered" >    console.error("\nShutting down...");</span>
 <span class="cstat-no" title="statement not covered" >    rl.close();</span>
 <span class="cstat-no" title="statement not covered" >    process.exit(0);</span>
   });
@@ -2122,7 +2125,7 @@ else <span class="cstat-no" title="statement not covered" >if (options.mode === 
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-08-05T17:43:38.679Z
+                at 2025-08-05T23:20:26.044Z
             </div>
         <script src="prettify.js"></script>
         <script>
