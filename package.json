@@ -1,5 +1,5 @@
 {
-  "name": "@izay21.dev/mcp-remote-proxy",
+  "name": "izay21.dev-mcp-remote-proxy",
   "version": "1.0.0",
   "description": "Expose MCP servers over TCP or WebSocket",
   "bin": {
