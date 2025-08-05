@@ -244,6 +244,7 @@ function startClient(options: Options) {
 
   function connectWs() {
     const ws = new WebSocket(`ws://${options.host || "localhost"}:${options.port}`);
+    let messageQueue: string[] = [];
 
     ws.on("open", () => {
       console.error(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
@@ -257,6 +258,14 @@ function startClient(options: Options) {
             isConnected = true;
             reconnectAttempts = 0;
             currentDelay = options.reconnectDelay || 1000;
+            
+            // Send any queued messages
+            while (messageQueue.length > 0) {
+              const queuedMessage = messageQueue.shift();
+              if (queuedMessage && ws.readyState === WebSocket.OPEN) {
+                ws.send(queuedMessage);
+              }
+            }
           } else {
             console.error("WebSocket authentication failed");
             ws.close();
@@ -303,6 +312,9 @@ function startClient(options: Options) {
     rl.on("line", (line) => {
       if (isConnected && ws.readyState === WebSocket.OPEN) {
         ws.send(line);
+      } else if (options.jwtToken && ws.readyState === WebSocket.OPEN && !isConnected) {
+        // Queue message during authentication
+        messageQueue.push(line);
       } else {
         console.error("Not connected. Message not sent.");
       }
