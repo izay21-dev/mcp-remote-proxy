@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // mcp-remote.ts
 import { spawn } from "child_process";
 import net from "net";
