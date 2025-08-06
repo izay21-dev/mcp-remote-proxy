@@ -5,7 +5,6 @@ import net from "net";
 import WebSocket, { WebSocketServer } from "ws";
 import { createServer as createHttpServer } from "http";
 import { Socket } from "net";
-import readline from "readline";
 import fs from "fs";
 import { generateJWTSecret, generateJWT, generateJWTWithConfig, verifyJWTWithPayload, hasRequiredRoles, JWTConfig, JWTPayload } from "./auth.js";
 import { loadPermissionsConfig, parseMCPMessage, isMethodAllowed, createErrorResponse, createMessageFilter, PermissionsConfig, MCPMessage } from "./permissions.js";
@@ -95,9 +94,18 @@ function startServer(options: Options) {
 
     wss.on("connection", (ws) => {
       log("WebSocket client connected");
+      let authTimeout: NodeJS.Timeout;
 
       if (options.jwtSecret) {
+        // Set authentication timeout
+        authTimeout = setTimeout(() => {
+          log("WebSocket client authentication timeout");
+          ws.send("AUTH_TIMEOUT");
+          ws.close();
+        }, 10000); // 10 second auth timeout
+
         ws.once("message", (msg) => {
+          clearTimeout(authTimeout);
           const token = msg.toString().trim();
           const { valid, payload } = verifyJWTWithPayload(token, options.jwtSecret!);
           if (valid && payload) {
@@ -111,23 +119,40 @@ function startServer(options: Options) {
             ws.send("AUTH_SUCCESS");
             
             const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
-            const stdoutListener = (data: Buffer) => ws.send(data);
+            const stdoutListener = (data: Buffer) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+              }
+            };
             
             proc.stdout?.on("data", stdoutListener);
             
             // Filter client messages to server
             ws.on("message", (msg) => {
-              const data = Buffer.from(msg.toString());
-              const result = messageFilter(data);
-              if (result.allowed && result.filteredData) {
-                proc.stdin?.write(result.filteredData);
-              } else if (result.response) {
-                ws.send(result.response);
+              try {
+                const data = Buffer.from(msg.toString());
+                const result = messageFilter(data);
+                if (result.allowed && result.filteredData) {
+                  if (proc.stdin && !proc.stdin.destroyed) {
+                    proc.stdin.write(result.filteredData);
+                  }
+                } else if (result.response) {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(result.response);
+                  }
+                }
+              } catch (err) {
+                log(`Error processing WebSocket message: ${err}`);
               }
             });
 
             ws.on("close", () => {
               log("WebSocket client disconnected");
+              proc.stdout?.off("data", stdoutListener);
+            });
+
+            ws.on("error", (err) => {
+              log(`WebSocket client error: ${err.message}`);
               proc.stdout?.off("data", stdoutListener);
             });
           } else {
@@ -136,11 +161,29 @@ function startServer(options: Options) {
             ws.close();
           }
         });
+
+        ws.on("close", () => {
+          clearTimeout(authTimeout);
+        });
+
+        ws.on("error", () => {
+          clearTimeout(authTimeout);
+        });
       } else {
-        const stdoutListener = (data: Buffer) => ws.send(data);
+        const stdoutListener = (data: Buffer) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(data);
+          }
+        };
         const messageListener = (msg: WebSocket.RawData) => {
-          const data = Buffer.isBuffer(msg) ? msg : Buffer.from(msg.toString());
-          proc.stdin?.write(data);
+          try {
+            const data = Buffer.isBuffer(msg) ? msg : Buffer.from(msg.toString());
+            if (proc.stdin && !proc.stdin.destroyed) {
+              proc.stdin.write(data);
+            }
+          } catch (err) {
+            log(`Error processing WebSocket message: ${err}`);
+          }
         };
 
         proc.stdout?.on("data", stdoutListener);
@@ -148,6 +191,12 @@ function startServer(options: Options) {
 
         ws.on("close", () => {
           log("WebSocket client disconnected");
+          proc.stdout?.off("data", stdoutListener);
+          ws.off("message", messageListener);
+        });
+
+        ws.on("error", (err) => {
+          log(`WebSocket client error: ${err.message}`);
           proc.stdout?.off("data", stdoutListener);
           ws.off("message", messageListener);
         });
@@ -163,7 +212,6 @@ function startServer(options: Options) {
 }
 
 function startClient(options: Options) {
-  const rl = readline.createInterface({ input: process.stdin });
   let reconnectAttempts = 0;
   let currentDelay = options.reconnectDelay || 1000;
   let isConnected = false;
@@ -250,18 +298,6 @@ function startClient(options: Options) {
       }
     });
 
-    rl.on("line", (line) => {
-      console.error(`[CLIENT] TCP readline input: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
-      console.error(`[CLIENT] TCP connection state - isConnected: ${isConnected}`);
-      
-      if (isConnected) {
-        console.error("[CLIENT] TCP sending line directly");
-        socket.write(line + "\n");
-      } else {
-        console.error("[CLIENT] TCP not connected. Line not sent.");
-        console.error("Not connected. Message not sent.");
-      }
-    });
 
     return socket;
   }
@@ -418,24 +454,6 @@ function startClient(options: Options) {
       }
     });
 
-    rl.on("line", (line) => {
-      console.error(`[CLIENT] Readline input: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
-      console.error(`[CLIENT] Connection state - isConnected: ${isConnected}, ws.readyState: ${ws.readyState}`);
-      
-      if (isConnected && ws.readyState === WebSocket.OPEN) {
-        console.error("[CLIENT] Sending line directly");
-        ws.send(line);
-      } else if (ws.readyState === WebSocket.OPEN && !isConnected) {
-        // Queue message during authentication or connection setup
-        console.error("[CLIENT] WebSocket open but not authenticated, queueing line");
-        messageQueue.push(line);
-      } else {
-        // Queue message when not connected - will be sent when connection is ready
-        console.error(`[CLIENT] Not connected (readyState: ${ws.readyState}), queueing line`);
-        messageQueue.push(line);
-        console.error("Not connected. Message queued.");
-      }
-    });
   }
 
   if (options.protocol === "tcp") {
@@ -449,7 +467,6 @@ function startClient(options: Options) {
   process.on("SIGINT", () => {
     shouldReconnect = false;
     console.error("\nShutting down...");
-    rl.close();
     process.exit(0);
   });
 }
