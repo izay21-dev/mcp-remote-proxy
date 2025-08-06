@@ -19,7 +19,7 @@ module.exports = {
     '!src/**/*.d.ts',
   ],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
-  testTimeout: 30000,
+  testTimeout: 300000, // 5 minutes for Docker integration tests
   moduleFileExtensions: ['ts', 'js'],
   verbose: true
 };

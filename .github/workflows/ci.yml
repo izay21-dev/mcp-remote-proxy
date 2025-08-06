@@ -27,6 +27,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Create package tarball for Docker builds
+        run: npm pack
+
       - name: Run tests
         run: npm test
 
