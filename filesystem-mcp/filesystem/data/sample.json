@@ -1,0 +1,17 @@
+{
+  "name": "Sample Data",
+  "version": "1.0.0",
+  "description": "Sample JSON file for MCP filesystem server testing",
+  "items": [
+    {
+      "id": 1,
+      "name": "Item 1",
+      "value": 100
+    },
+    {
+      "id": 2,
+      "name": "Item 2",
+      "value": 200
+    }
+  ]
+}

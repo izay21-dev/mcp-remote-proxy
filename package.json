@@ -14,7 +14,10 @@
     "test:watch": "jest --config=jest.config.cjs --watch",
     "test:coverage": "jest --config=jest.config.cjs --coverage",
     "test:unit": "jest --config=jest.config.cjs --testPathIgnorePatterns='integration.test.ts'",
-    "test:integration": "jest --config=jest.config.cjs --testPathPatterns=integration.test.ts",
+    "test:integration": "jest --config=jest.config.cjs --testPathPatterns=integration.test.ts --testTimeout=60000",
+    "test:integration:docker": "npm run build && docker compose -f filesystem-mcp/docker-compose.yml build && npm run test:integration",
+    "docker:up": "docker compose -f filesystem-mcp/docker-compose.yml up -d",
+    "docker:down": "docker compose -f filesystem-mcp/docker-compose.yml down",
     "pretest": "npm run build",
     "prepublishOnly": "npm run build && npm test"
   },

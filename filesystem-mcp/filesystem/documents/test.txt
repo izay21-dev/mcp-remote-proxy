@@ -1,0 +1,2 @@
+This is a test document for the MCP filesystem server integration tests.
+It contains sample content that can be read by the tests.

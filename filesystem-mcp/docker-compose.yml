@@ -1,0 +1,31 @@
+networks:
+  mcp:
+    name: mcp
+    driver: bridge
+    attachable: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.22.0/24
+
+services:
+  filesystem-mcp:
+    build: 
+      context: ..
+      dockerfile: filesystem-mcp/Dockerfile
+    container_name: filesystem-mcp-server
+    networks:
+      mcp:
+        ipv4_address: 192.168.22.52
+    volumes:
+      # All directories must be mounted under /projects
+      - ./filesystem/documents:/projects/documents
+      - ./filesystem/code:/projects/code
+      - ./filesystem/data:/projects/data
+    entrypoint: ["mcp-remote", "server", "ws", "--port", "9000", "--jwt-secret", "4ZPeqenC9Cs3scxjR11tvTh1AWESFvXeJxaIlhbJQFSMyRy9CEkfZtCm7GIu6z1fDeATRdsqstjG2bmVJnxFTA", "--require-roles", "admin", "--", "mcp-server-filesystem", "/projects"]
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+
+
+

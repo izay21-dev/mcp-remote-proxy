@@ -231,6 +231,15 @@ function startClient(options: Options) {
       }
     });
 
+    // Read from stdin and send to TCP server
+    process.stdin.on('data', (data) => {
+      if (isConnected) {
+        socket.write(data);
+      } else {
+        console.error("Not connected. Message not sent.");
+      }
+    });
+
     rl.on("line", (line) => {
       if (isConnected) {
         socket.write(line + "\n");
@@ -318,6 +327,21 @@ function startClient(options: Options) {
         }, delay);
       } else if (shouldReconnect && options.autoReconnect) {
         console.error("Max reconnection attempts reached. Giving up.");
+      }
+    });
+
+    // Read from stdin and send to WebSocket server
+    process.stdin.on('data', (data) => {
+      const message = data.toString();
+      if (isConnected && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      } else if (ws.readyState === WebSocket.OPEN && !isConnected) {
+        // Queue message during authentication or connection setup
+        messageQueue.push(message);
+      } else {
+        // Queue message when not connected - will be sent when connection is ready
+        messageQueue.push(message);
+        console.error("Not connected. Message queued.");
       }
     });
 
