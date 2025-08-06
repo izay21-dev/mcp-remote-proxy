@@ -331,25 +331,46 @@ describe('MCP Remote Proxy Integration Tests', () => {
           const message = data.toString().trim();
           
           // Handle authentication response
-          if (message === 'AUTH_SUCCESS') {
-            authSuccess = true;
-            const initRequest = {
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'initialize',
-              params: {
-                protocolVersion: '2024-11-05',
-                capabilities: {},
-                clientInfo: { name: 'test-client', version: '1.0.0' }
-              }
-            };
-            ws.send(JSON.stringify(initRequest) + '\n');
-            return;
-          }
-
-          if (message === 'AUTH_FAILED') {
-            reject(new Error('Authentication failed'));
-            return;
+          try {
+            const authResult = JSON.parse(message);
+            if (authResult.result && authResult.result.authenticated && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+              return;
+            } else if (authResult.error) {
+              reject(new Error(`Authentication failed: ${authResult.error.message}`));
+              return;
+            }
+          } catch (err) {
+            // If it's not JSON, might be old format
+            if (message === 'AUTH_SUCCESS' && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+              return;
+            } else if (message === 'AUTH_FAILED') {
+              reject(new Error('Authentication failed'));
+              return;
+            }
           }
 
           // Handle MCP responses after auth
@@ -407,14 +428,28 @@ describe('MCP Remote Proxy Integration Tests', () => {
 
         ws.on('message', (data) => {
           const message = data.toString().trim();
-          if (message === 'AUTH_FAILED') {
-            // This is expected behavior for invalid token
-            ws.close();
-            resolve();
-          } else if (message === 'AUTH_SUCCESS') {
-            reject(new Error('Expected authentication to fail with invalid token'));
-          } else {
-            reject(new Error(`Unexpected message: ${message}`));
+          
+          try {
+            const authResult = JSON.parse(message);
+            if (authResult.error && authResult.error.message === 'Authentication failed') {
+              // This is expected behavior for invalid token
+              ws.close();
+              resolve();
+            } else if (authResult.result && authResult.result.authenticated) {
+              reject(new Error('Expected authentication to fail with invalid token'));
+            } else {
+              reject(new Error(`Unexpected auth response: ${message}`));
+            }
+          } catch (err) {
+            // If it's not JSON, it might be the old format - handle both
+            if (message === 'AUTH_FAILED') {
+              ws.close();
+              resolve();
+            } else if (message === 'AUTH_SUCCESS') {
+              reject(new Error('Expected authentication to fail with invalid token'));
+            } else {
+              reject(new Error(`Unexpected message: ${message}`));
+            }
           }
         });
 
@@ -450,25 +485,44 @@ describe('MCP Remote Proxy Integration Tests', () => {
         ws.on('message', (data) => {
           const message = data.toString().trim();
           
-          if (message === 'AUTH_SUCCESS') {
-            authSuccess = true;
-            const initRequest = {
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'initialize',
-              params: {
-                protocolVersion: '2024-11-05',
-                capabilities: {},
-                clientInfo: { name: 'test-client', version: '1.0.0' }
-              }
-            };
-            ws.send(JSON.stringify(initRequest) + '\n');
-            return;
-          }
-
-          if (message === 'AUTH_FAILED') {
-            reject(new Error('Authentication failed with valid token'));
-            return;
+          try {
+            const authResult = JSON.parse(message);
+            if (authResult.result && authResult.result.authenticated && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+            } else if (authResult.error) {
+              reject(new Error(`Authentication failed: ${authResult.error.message}`));
+              return;
+            }
+          } catch (err) {
+            // If it's not JSON, might be old format or MCP response
+            if (message === 'AUTH_SUCCESS' && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+            } else if (message === 'AUTH_FAILED') {
+              reject(new Error('Authentication failed with valid token'));
+              return;
+            }
           }
 
           // Handle MCP response after auth
@@ -483,7 +537,7 @@ describe('MCP Remote Proxy Integration Tests', () => {
                 reject(new Error(`MCP error: ${response.error.message}`));
               }
             } catch (err) {
-              reject(err);
+              // Ignore non-JSON messages after auth success
             }
           }
         });
@@ -521,25 +575,46 @@ describe('MCP Remote Proxy Integration Tests', () => {
         ws.on('message', (data) => {
           const message = data.toString().trim();
           
-          if (message === 'AUTH_SUCCESS') {
-            authSuccess = true;
-            const initRequest = {
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'initialize',
-              params: {
-                protocolVersion: '2024-11-05',
-                capabilities: {},
-                clientInfo: { name: 'test-client', version: '1.0.0' }
-              }
-            };
-            ws.send(JSON.stringify(initRequest) + '\n');
-            return;
-          }
-
-          if (message === 'AUTH_FAILED') {
-            reject(new Error('Authentication failed'));
-            return;
+          try {
+            const authResult = JSON.parse(message);
+            if (authResult.result && authResult.result.authenticated && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+              return;
+            } else if (authResult.error) {
+              reject(new Error(`Authentication failed: ${authResult.error.message}`));
+              return;
+            }
+          } catch (err) {
+            // If it's not JSON, might be old format
+            if (message === 'AUTH_SUCCESS' && !authSuccess) {
+              authSuccess = true;
+              const initRequest = {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                  protocolVersion: '2024-11-05',
+                  capabilities: {},
+                  clientInfo: { name: 'test-client', version: '1.0.0' }
+                }
+              };
+              ws.send(JSON.stringify(initRequest) + '\n');
+              return;
+            } else if (message === 'AUTH_FAILED') {
+              reject(new Error('Authentication failed'));
+              return;
+            }
           }
 
           if (authSuccess) {

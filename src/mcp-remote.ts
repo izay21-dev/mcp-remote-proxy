@@ -49,12 +49,26 @@ function startServer(options: Options) {
           if (valid && payload) {
             if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
               log(`TCP client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
-              socket.write("AUTH_INSUFFICIENT_ROLES\n");
+              socket.write(JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32001,
+                  message: "Insufficient roles",
+                  data: { required: options.requiredRoles, provided: payload.roles || [] }
+                }
+              }) + "\n");
               socket.end();
               return;
             }
             log(`TCP client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
-            socket.write("AUTH_SUCCESS\n");
+            socket.write(JSON.stringify({
+              jsonrpc: "2.0",
+              result: {
+                authenticated: true,
+                user: payload.user,
+                roles: payload.roles || []
+              }
+            }) + "\n");
             
             const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
             
@@ -71,7 +85,14 @@ function startServer(options: Options) {
             });
           } else {
             log("TCP client authentication failed");
-            socket.write("AUTH_FAILED\n");
+            socket.write(JSON.stringify({
+              jsonrpc: "2.0",
+              error: {
+                code: -32002,
+                message: "Authentication failed",
+                data: { reason: "Invalid token" }
+              }
+            }) + "\n");
             socket.end();
           }
         });
@@ -100,7 +121,14 @@ function startServer(options: Options) {
         // Set authentication timeout
         authTimeout = setTimeout(() => {
           log("WebSocket client authentication timeout");
-          ws.send("AUTH_TIMEOUT");
+          ws.send(JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32003,
+              message: "Authentication timeout",
+              data: { timeout: "10 seconds" }
+            }
+          }));
           ws.close();
         }, 10000); // 10 second auth timeout
 
@@ -111,12 +139,26 @@ function startServer(options: Options) {
           if (valid && payload) {
             if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
               log(`WebSocket client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
-              ws.send("AUTH_INSUFFICIENT_ROLES");
+              ws.send(JSON.stringify({
+                jsonrpc: "2.0",
+                error: {
+                  code: -32001,
+                  message: "Insufficient roles",
+                  data: { required: options.requiredRoles, provided: payload.roles || [] }
+                }
+              }));
               ws.close();
               return;
             }
             log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
-            ws.send("AUTH_SUCCESS");
+            ws.send(JSON.stringify({
+              jsonrpc: "2.0",
+              result: {
+                authenticated: true,
+                user: payload.user,
+                roles: payload.roles || []
+              }
+            }));
             
             const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
             const stdoutListener = (data: Buffer) => {
@@ -157,7 +199,14 @@ function startServer(options: Options) {
             });
           } else {
             log("WebSocket client authentication failed");
-            ws.send("AUTH_FAILED");
+            ws.send(JSON.stringify({
+              jsonrpc: "2.0",
+              error: {
+                code: -32002,
+                message: "Authentication failed",
+                data: { reason: "Invalid token" }
+              }
+            }));
             ws.close();
           }
         });
@@ -235,13 +284,20 @@ function startClient(options: Options) {
         socket.once("data", (data) => {
           const response = data.toString().trim();
           console.error(`[CLIENT] TCP authentication response: ${response}`);
-          if (response === "AUTH_SUCCESS") {
-            console.error("[CLIENT] TCP authentication successful");
-            isConnected = true;
-            reconnectAttempts = 0;
-            currentDelay = options.reconnectDelay || 1000;
-          } else {
-            console.error(`[CLIENT] TCP authentication failed with response: ${response}`);
+          try {
+            const authResult = JSON.parse(response);
+            if (authResult.result && authResult.result.authenticated) {
+              console.error("[CLIENT] TCP authentication successful");
+              isConnected = true;
+              reconnectAttempts = 0;
+              currentDelay = options.reconnectDelay || 1000;
+            } else {
+              console.error(`[CLIENT] TCP authentication failed: ${authResult.error?.message || 'Unknown error'}`);
+              socket.end();
+              return;
+            }
+          } catch (err) {
+            console.error(`[CLIENT] TCP authentication response parse error: ${err}`);
             socket.end();
             return;
           }
@@ -329,35 +385,42 @@ function startClient(options: Options) {
         ws.once("message", (msg) => {
           const response = msg.toString().trim();
           console.error(`[CLIENT] Authentication response: ${response}`);
-          if (response === "AUTH_SUCCESS") {
-            console.error("[CLIENT] WebSocket authentication successful");
-            isConnected = true;
-            reconnectAttempts = 0;
-            currentDelay = options.reconnectDelay || 1000;
-            
-            // Set up periodic ping to keep connection alive
-            const pingInterval = setInterval(() => {
-              if (ws.readyState === WebSocket.OPEN) {
-                console.error("[CLIENT] Sending ping to keep connection alive");
-                ws.ping();
-              } else {
-                clearInterval(pingInterval);
-              }
-            }, 30000); // Ping every 30 seconds
-            
-            // Send any queued messages
-            if (messageQueue.length > 0) {
-              console.error(`[CLIENT] Sending ${messageQueue.length} queued messages`);
-              while (messageQueue.length > 0) {
-                const queuedMessage = messageQueue.shift();
-                if (queuedMessage && ws.readyState === WebSocket.OPEN) {
-                  console.error(`[CLIENT] Sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
-                  ws.send(queuedMessage);
+          try {
+            const authResult = JSON.parse(response);
+            if (authResult.result && authResult.result.authenticated) {
+              console.error("[CLIENT] WebSocket authentication successful");
+              isConnected = true;
+              reconnectAttempts = 0;
+              currentDelay = options.reconnectDelay || 1000;
+              
+              // Set up periodic ping to keep connection alive
+              const pingInterval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  console.error("[CLIENT] Sending ping to keep connection alive");
+                  ws.ping();
+                } else {
+                  clearInterval(pingInterval);
+                }
+              }, 30000); // Ping every 30 seconds
+              
+              // Send any queued messages
+              if (messageQueue.length > 0) {
+                console.error(`[CLIENT] Sending ${messageQueue.length} queued messages`);
+                while (messageQueue.length > 0) {
+                  const queuedMessage = messageQueue.shift();
+                  if (queuedMessage && ws.readyState === WebSocket.OPEN) {
+                    console.error(`[CLIENT] Sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
+                    ws.send(queuedMessage);
+                  }
                 }
               }
+            } else {
+              console.error(`[CLIENT] WebSocket authentication failed: ${authResult.error?.message || 'Unknown error'}`);
+              ws.close();
+              return;
             }
-          } else {
-            console.error(`[CLIENT] WebSocket authentication failed with response: ${response}`);
+          } catch (err) {
+            console.error(`[CLIENT] WebSocket authentication response parse error: ${err}`);
             ws.close();
             return;
           }
