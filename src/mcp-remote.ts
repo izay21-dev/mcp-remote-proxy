@@ -176,25 +176,30 @@ function startClient(options: Options) {
   function connectTcp(): net.Socket {
     const socket = net.connect(options.port, options.host || "localhost");
     
+    console.error(`[CLIENT] Initiating TCP connection to ${options.host || "localhost"}:${options.port}`);
+    
     socket.on("connect", () => {
-      console.error(`Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);
+      console.error(`[CLIENT] Connected to TCP MCP server at ${options.host || "localhost"}:${options.port}`);
       
       if (options.jwtToken) {
+        console.error("[CLIENT] Sending JWT token for TCP authentication");
         socket.write(options.jwtToken + "\n");
         socket.once("data", (data) => {
           const response = data.toString().trim();
+          console.error(`[CLIENT] TCP authentication response: ${response}`);
           if (response === "AUTH_SUCCESS") {
-            log("TCP authentication successful");
+            console.error("[CLIENT] TCP authentication successful");
             isConnected = true;
             reconnectAttempts = 0;
             currentDelay = options.reconnectDelay || 1000;
           } else {
-            console.error("TCP authentication failed");
+            console.error(`[CLIENT] TCP authentication failed with response: ${response}`);
             socket.end();
             return;
           }
         });
       } else {
+        console.error("[CLIENT] No JWT authentication required for TCP, connection ready");
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
@@ -202,48 +207,58 @@ function startClient(options: Options) {
     });
 
     socket.on("data", (data) => {
+      const message = data.toString();
+      console.error(`[CLIENT] TCP received message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
       process.stdout.write(data);
     });
 
     socket.on("error", (err) => {
-      if (isConnected) {
-        console.error(`TCP connection error: ${err.message}`);
-      }
+      console.error(`[CLIENT] TCP connection error (connected: ${isConnected}): ${err.message}`);
       isConnected = false;
     });
 
     socket.on("close", () => {
-      if (isConnected) {
-        console.error("TCP connection closed");
-      }
+      console.error(`[CLIENT] TCP connection closed (was connected: ${isConnected})`);
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
-        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
+        console.error(`[CLIENT] TCP reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {
           reconnectAttempts++;
+          console.error(`[CLIENT] Starting TCP reconnection attempt ${reconnectAttempts}`);
           connectTcp();
         }, delay);
       } else if (shouldReconnect && options.autoReconnect) {
-        console.error("Max reconnection attempts reached. Giving up.");
+        console.error("[CLIENT] TCP max reconnection attempts reached. Giving up.");
       }
     });
 
     // Read from stdin and send to TCP server
     process.stdin.on('data', (data) => {
+      const message = data.toString();
+      console.error(`[CLIENT] TCP stdin data received: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+      console.error(`[CLIENT] TCP connection state - isConnected: ${isConnected}`);
+      
       if (isConnected) {
+        console.error("[CLIENT] TCP sending message directly");
         socket.write(data);
       } else {
+        console.error("[CLIENT] TCP not connected. Message not sent.");
         console.error("Not connected. Message not sent.");
       }
     });
 
     rl.on("line", (line) => {
+      console.error(`[CLIENT] TCP readline input: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
+      console.error(`[CLIENT] TCP connection state - isConnected: ${isConnected}`);
+      
       if (isConnected) {
+        console.error("[CLIENT] TCP sending line directly");
         socket.write(line + "\n");
       } else {
+        console.error("[CLIENT] TCP not connected. Line not sent.");
         console.error("Not connected. Message not sent.");
       }
     });
@@ -252,45 +267,90 @@ function startClient(options: Options) {
   }
 
   function connectWs() {
-    const ws = new WebSocket(`ws://${options.host || "localhost"}:${options.port}`);
+    const ws = new WebSocket(`ws://${options.host || "localhost"}:${options.port}`, {
+      handshakeTimeout: 10000, // 10 second handshake timeout
+    });
     let messageQueue: string[] = [];
+    let connectionTimeout: NodeJS.Timeout;
+
+    console.error(`[CLIENT] Initiating WebSocket connection to ${options.host || "localhost"}:${options.port}`);
+
+    // Set a connection timeout
+    connectionTimeout = setTimeout(() => {
+      console.error("[CLIENT] WebSocket connection timeout after 15 seconds");
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.terminate();
+      }
+    }, 15000);
 
     ws.on("open", () => {
-      console.error(`Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
+      console.error(`[CLIENT] Connected to WebSocket MCP server at ${options.host || "localhost"}:${options.port}`);
+      clearTimeout(connectionTimeout);
       
       if (options.jwtToken) {
+        console.error("[CLIENT] Sending JWT token for authentication");
         ws.send(options.jwtToken);
         ws.once("message", (msg) => {
           const response = msg.toString().trim();
+          console.error(`[CLIENT] Authentication response: ${response}`);
           if (response === "AUTH_SUCCESS") {
-            log("WebSocket authentication successful");
+            console.error("[CLIENT] WebSocket authentication successful");
             isConnected = true;
             reconnectAttempts = 0;
             currentDelay = options.reconnectDelay || 1000;
             
+            // Set up periodic ping to keep connection alive
+            const pingInterval = setInterval(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                console.error("[CLIENT] Sending ping to keep connection alive");
+                ws.ping();
+              } else {
+                clearInterval(pingInterval);
+              }
+            }, 30000); // Ping every 30 seconds
+            
             // Send any queued messages
-            while (messageQueue.length > 0) {
-              const queuedMessage = messageQueue.shift();
-              if (queuedMessage && ws.readyState === WebSocket.OPEN) {
-                ws.send(queuedMessage);
+            if (messageQueue.length > 0) {
+              console.error(`[CLIENT] Sending ${messageQueue.length} queued messages`);
+              while (messageQueue.length > 0) {
+                const queuedMessage = messageQueue.shift();
+                if (queuedMessage && ws.readyState === WebSocket.OPEN) {
+                  console.error(`[CLIENT] Sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
+                  ws.send(queuedMessage);
+                }
               }
             }
           } else {
-            console.error("WebSocket authentication failed");
+            console.error(`[CLIENT] WebSocket authentication failed with response: ${response}`);
             ws.close();
             return;
           }
         });
       } else {
+        console.error("[CLIENT] No JWT authentication required, connection ready");
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
         
+        // Set up periodic ping to keep connection alive
+        const pingInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            console.error("[CLIENT] Sending ping to keep connection alive");
+            ws.ping();
+          } else {
+            clearInterval(pingInterval);
+          }
+        }, 30000); // Ping every 30 seconds
+        
         // Send any queued messages when no auth is required
-        while (messageQueue.length > 0) {
-          const queuedMessage = messageQueue.shift();
-          if (queuedMessage && ws.readyState === WebSocket.OPEN) {
-            ws.send(queuedMessage);
+        if (messageQueue.length > 0) {
+          console.error(`[CLIENT] Sending ${messageQueue.length} queued messages`);
+          while (messageQueue.length > 0) {
+            const queuedMessage = messageQueue.shift();
+            if (queuedMessage && ws.readyState === WebSocket.OPEN) {
+              console.error(`[CLIENT] Sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
+              ws.send(queuedMessage);
+            }
           }
         }
       }
@@ -298,61 +358,80 @@ function startClient(options: Options) {
 
     ws.on("message", (msg) => {
       try {
-        process.stdout.write(msg.toString());
+        const message = msg.toString();
+        console.error(`[CLIENT] Received message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+        process.stdout.write(message);
       } catch (err) {
-        console.error("Error writing to stdout:", err);
+        console.error(`[CLIENT] Error writing to stdout: ${err}`);
       }
+    });
+
+    ws.on("pong", () => {
+      console.error("[CLIENT] Received pong response");
     });
 
     ws.on("error", (err) => {
-      if (isConnected) {
-        console.error(`WebSocket connection error: ${err.message}`);
-      }
+      console.error(`[CLIENT] WebSocket error (connected: ${isConnected}): ${err.message}`);
+      console.error(`[CLIENT] WebSocket state: ${ws.readyState} (CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3)`);
+      clearTimeout(connectionTimeout);
       isConnected = false;
     });
 
-    ws.on("close", () => {
-      if (isConnected) {
-        console.error("WebSocket connection closed");
-      }
+    ws.on("close", (code, reason) => {
+      console.error(`[CLIENT] WebSocket connection closed (code: ${code}, reason: ${reason || 'none'}, was connected: ${isConnected})`);
+      console.error(`[CLIENT] WebSocket state: ${ws.readyState}, queued messages: ${messageQueue.length}`);
+      clearTimeout(connectionTimeout);
       isConnected = false;
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
-        console.error(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
+        console.error(`[CLIENT] Reconnecting in ${delay}ms... (attempt ${reconnectAttempts + 1}/${options.maxReconnectAttempts || 5})`);
         
         setTimeout(() => {
           reconnectAttempts++;
+          console.error(`[CLIENT] Starting reconnection attempt ${reconnectAttempts}`);
           connectWs();
         }, delay);
       } else if (shouldReconnect && options.autoReconnect) {
-        console.error("Max reconnection attempts reached. Giving up.");
+        console.error("[CLIENT] Max reconnection attempts reached. Giving up.");
       }
     });
 
     // Read from stdin and send to WebSocket server
     process.stdin.on('data', (data) => {
       const message = data.toString();
+      console.error(`[CLIENT] Stdin data received: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+      console.error(`[CLIENT] Connection state - isConnected: ${isConnected}, ws.readyState: ${ws.readyState}`);
+      
       if (isConnected && ws.readyState === WebSocket.OPEN) {
+        console.error("[CLIENT] Sending message directly");
         ws.send(message);
       } else if (ws.readyState === WebSocket.OPEN && !isConnected) {
         // Queue message during authentication or connection setup
+        console.error("[CLIENT] WebSocket open but not authenticated, queueing message");
         messageQueue.push(message);
       } else {
         // Queue message when not connected - will be sent when connection is ready
+        console.error(`[CLIENT] Not connected (readyState: ${ws.readyState}), queueing message`);
         messageQueue.push(message);
         console.error("Not connected. Message queued.");
       }
     });
 
     rl.on("line", (line) => {
+      console.error(`[CLIENT] Readline input: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`);
+      console.error(`[CLIENT] Connection state - isConnected: ${isConnected}, ws.readyState: ${ws.readyState}`);
+      
       if (isConnected && ws.readyState === WebSocket.OPEN) {
+        console.error("[CLIENT] Sending line directly");
         ws.send(line);
       } else if (ws.readyState === WebSocket.OPEN && !isConnected) {
         // Queue message during authentication or connection setup
+        console.error("[CLIENT] WebSocket open but not authenticated, queueing line");
         messageQueue.push(line);
       } else {
         // Queue message when not connected - will be sent when connection is ready
+        console.error(`[CLIENT] Not connected (readyState: ${ws.readyState}), queueing line`);
         messageQueue.push(line);
         console.error("Not connected. Message queued.");
       }
