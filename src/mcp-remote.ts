@@ -116,6 +116,9 @@ function startServer(options: Options) {
     wss.on("connection", (ws) => {
       log("WebSocket client connected");
       let authTimeout: NodeJS.Timeout;
+      let isAuthenticated = false;
+      let messageFilter: any;
+      let stdoutListener: any;
 
       if (options.jwtSecret) {
         // Set authentication timeout
@@ -132,91 +135,95 @@ function startServer(options: Options) {
           ws.close();
         }, 10000); // 10 second auth timeout
 
-        ws.once("message", (msg) => {
-          clearTimeout(authTimeout);
-          const token = msg.toString().trim();
-          const { valid, payload } = verifyJWTWithPayload(token, options.jwtSecret!);
-          if (valid && payload) {
-            if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
-              log(`WebSocket client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
+        // Handle all messages with a state machine
+        ws.on("message", (msg) => {
+          if (!isAuthenticated) {
+            // Handle authentication
+            clearTimeout(authTimeout);
+            const token = msg.toString().trim();
+            const { valid, payload } = verifyJWTWithPayload(token, options.jwtSecret!);
+            if (valid && payload) {
+              if (options.requiredRoles && !hasRequiredRoles(payload.roles, options.requiredRoles)) {
+                log(`WebSocket client authorization failed - User: ${payload.user || "anonymous"} lacks required roles: ${options.requiredRoles.join(",")}`);
+                ws.send(JSON.stringify({
+                  jsonrpc: "2.0",
+                  error: {
+                    code: -32001,
+                    message: "Insufficient roles",
+                    data: { required: options.requiredRoles, provided: payload.roles || [] }
+                  }
+                }));
+                ws.close();
+                return;
+              }
+              log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
+              isAuthenticated = true;
+              
+              // Send auth success response
+              ws.send(JSON.stringify({
+                jsonrpc: "2.0",
+                result: {
+                  authenticated: true,
+                  user: payload.user,
+                  roles: payload.roles || []
+                }
+              }));
+              
+              // Set up MCP forwarding
+              messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
+              stdoutListener = (data: Buffer) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              };
+              
+              proc.stdout?.on("data", stdoutListener);
+            } else {
+              log("WebSocket client authentication failed");
               ws.send(JSON.stringify({
                 jsonrpc: "2.0",
                 error: {
-                  code: -32001,
-                  message: "Insufficient roles",
-                  data: { required: options.requiredRoles, provided: payload.roles || [] }
+                  code: -32002,
+                  message: "Authentication failed",
+                  data: { reason: "Invalid token" }
                 }
               }));
               ws.close();
-              return;
             }
-            log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
-            ws.send(JSON.stringify({
-              jsonrpc: "2.0",
-              result: {
-                authenticated: true,
-                user: payload.user,
-                roles: payload.roles || []
-              }
-            }));
-            
-            const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
-            const stdoutListener = (data: Buffer) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(data);
-              }
-            };
-            
-            proc.stdout?.on("data", stdoutListener);
-            
-            // Filter client messages to server
-            ws.on("message", (msg) => {
-              try {
-                const data = Buffer.from(msg.toString());
-                const result = messageFilter(data);
-                if (result.allowed && result.filteredData) {
-                  if (proc.stdin && !proc.stdin.destroyed) {
-                    proc.stdin.write(result.filteredData);
-                  }
-                } else if (result.response) {
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(result.response);
-                  }
-                }
-              } catch (err) {
-                log(`Error processing WebSocket message: ${err}`);
-              }
-            });
-
-            ws.on("close", () => {
-              log("WebSocket client disconnected");
-              proc.stdout?.off("data", stdoutListener);
-            });
-
-            ws.on("error", (err) => {
-              log(`WebSocket client error: ${err.message}`);
-              proc.stdout?.off("data", stdoutListener);
-            });
           } else {
-            log("WebSocket client authentication failed");
-            ws.send(JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32002,
-                message: "Authentication failed",
-                data: { reason: "Invalid token" }
+            // Handle MCP messages after authentication
+            try {
+              const data = Buffer.from(msg.toString());
+              const result = messageFilter(data);
+              if (result.allowed && result.filteredData) {
+                if (proc.stdin && !proc.stdin.destroyed) {
+                  proc.stdin.write(result.filteredData);
+                }
+              } else if (result.response) {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(result.response);
+                }
               }
-            }));
-            ws.close();
+            } catch (err) {
+              log(`Error processing WebSocket message: ${err}`);
+            }
           }
         });
 
         ws.on("close", () => {
           clearTimeout(authTimeout);
+          log("WebSocket client disconnected");
+          if (stdoutListener) {
+            proc.stdout?.off("data", stdoutListener);
+          }
         });
 
-        ws.on("error", () => {
+        ws.on("error", (err) => {
           clearTimeout(authTimeout);
+          log(`WebSocket client error: ${err.message}`);
+          if (stdoutListener) {
+            proc.stdout?.off("data", stdoutListener);
+          }
         });
       } else {
         const stdoutListener = (data: Buffer) => {
