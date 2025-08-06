@@ -25,14 +25,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/397</span>
+                <span class='fraction'>0/404</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/249</span>
+                <span class='fraction'>0/252</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/390</span>
+                <span class='fraction'>0/397</span>
             </div>
         
             
@@ -760,7 +760,21 @@
 <a name='L695'></a><a href='#L695'>695</a>
 <a name='L696'></a><a href='#L696'>696</a>
 <a name='L697'></a><a href='#L697'>697</a>
-<a name='L698'></a><a href='#L698'>698</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L698'></a><a href='#L698'>698</a>
+<a name='L699'></a><a href='#L699'>699</a>
+<a name='L700'></a><a href='#L700'>700</a>
+<a name='L701'></a><a href='#L701'>701</a>
+<a name='L702'></a><a href='#L702'>702</a>
+<a name='L703'></a><a href='#L703'>703</a>
+<a name='L704'></a><a href='#L704'>704</a>
+<a name='L705'></a><a href='#L705'>705</a>
+<a name='L706'></a><a href='#L706'>706</a>
+<a name='L707'></a><a href='#L707'>707</a>
+<a name='L708'></a><a href='#L708'>708</a>
+<a name='L709'></a><a href='#L709'>709</a>
+<a name='L710'></a><a href='#L710'>710</a>
+<a name='L711'></a><a href='#L711'>711</a>
+<a name='L712'></a><a href='#L712'>712</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1040,9 +1054,21 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1078,6 +1104,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1735,11 +1763,23 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
 <span class="cstat-no" title="statement not covered" >        isConnected = true;</span>
 <span class="cstat-no" title="statement not covered" >        reconnectAttempts = 0;</span>
 <span class="cstat-no" title="statement not covered" >        currentDelay = options.reconnectDelay || 1000;</span>
+        
+        // Send any queued messages when no auth is required
+<span class="cstat-no" title="statement not covered" >        while (messageQueue.length &gt; 0) {</span>
+          const queuedMessage = <span class="cstat-no" title="statement not covered" >messageQueue.shift();</span>
+<span class="cstat-no" title="statement not covered" >          if (queuedMessage &amp;&amp; ws.readyState === WebSocket.OPEN) {</span>
+<span class="cstat-no" title="statement not covered" >            ws.send(queuedMessage);</span>
+          }
+        }
       }
     });
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    ws.on("message", <span class="fstat-no" title="function not covered" >(m</span>sg) =&gt; {</span>
-<span class="cstat-no" title="statement not covered" >      process.stdout.write(msg.toString());</span>
+<span class="cstat-no" title="statement not covered" >      try {</span>
+<span class="cstat-no" title="statement not covered" >        process.stdout.write(msg.toString());</span>
+      } catch (err) {
+<span class="cstat-no" title="statement not covered" >        console.error("Error writing to stdout:", err);</span>
+      }
     });
 &nbsp;
 <span class="cstat-no" title="statement not covered" >    ws.on("error", <span class="fstat-no" title="function not covered" >(e</span>rr) =&gt; {</span>
@@ -1771,11 +1811,13 @@ function <span class="fstat-no" title="function not covered" >startClient(</span
 <span class="cstat-no" title="statement not covered" >    rl.on("line", <span class="fstat-no" title="function not covered" >(l</span>ine) =&gt; {</span>
 <span class="cstat-no" title="statement not covered" >      if (isConnected &amp;&amp; ws.readyState === WebSocket.OPEN) {</span>
 <span class="cstat-no" title="statement not covered" >        ws.send(line);</span>
-      } else <span class="cstat-no" title="statement not covered" >if (options.jwtToken &amp;&amp; ws.readyState === WebSocket.OPEN &amp;&amp; !isConnected) {</span>
-        // Queue message during authentication
+      } else <span class="cstat-no" title="statement not covered" >if (ws.readyState === WebSocket.OPEN &amp;&amp; !isConnected) {</span>
+        // Queue message during authentication or connection setup
 <span class="cstat-no" title="statement not covered" >        messageQueue.push(line);</span>
       } else {
-<span class="cstat-no" title="statement not covered" >        console.error("Not connected. Message not sent.");</span>
+        // Queue message when not connected - will be sent when connection is ready
+<span class="cstat-no" title="statement not covered" >        messageQueue.push(line);</span>
+<span class="cstat-no" title="statement not covered" >        console.error("Not connected. Message queued.");</span>
       }
     });
   }
@@ -2161,7 +2203,7 @@ else <span class="cstat-no" title="statement not covered" >if (options.mode === 
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-08-05T23:51:44.632Z
+                at 2025-08-06T00:15:46.241Z
             </div>
         <script src="prettify.js"></script>
         <script>

@@ -276,11 +276,23 @@ function startClient(options: Options) {
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
+        
+        // Send any queued messages when no auth is required
+        while (messageQueue.length > 0) {
+          const queuedMessage = messageQueue.shift();
+          if (queuedMessage && ws.readyState === WebSocket.OPEN) {
+            ws.send(queuedMessage);
+          }
+        }
       }
     });
 
     ws.on("message", (msg) => {
-      process.stdout.write(msg.toString());
+      try {
+        process.stdout.write(msg.toString());
+      } catch (err) {
+        console.error("Error writing to stdout:", err);
+      }
     });
 
     ws.on("error", (err) => {
@@ -312,11 +324,13 @@ function startClient(options: Options) {
     rl.on("line", (line) => {
       if (isConnected && ws.readyState === WebSocket.OPEN) {
         ws.send(line);
-      } else if (options.jwtToken && ws.readyState === WebSocket.OPEN && !isConnected) {
-        // Queue message during authentication
+      } else if (ws.readyState === WebSocket.OPEN && !isConnected) {
+        // Queue message during authentication or connection setup
         messageQueue.push(line);
       } else {
-        console.error("Not connected. Message not sent.");
+        // Queue message when not connected - will be sent when connection is ready
+        messageQueue.push(line);
+        console.error("Not connected. Message queued.");
       }
     });
   }
