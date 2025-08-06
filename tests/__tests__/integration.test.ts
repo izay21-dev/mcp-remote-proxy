@@ -288,12 +288,24 @@ describe('MCP Remote Proxy Integration Tests', () => {
 
         ws.on('message', (data) => {
           const message = data.toString().trim();
-          if (message === 'AUTH_FAILED') {
-            // This is expected behavior
-            ws.close();
-            resolve();
-          } else {
-            reject(new Error(`Expected AUTH_FAILED, got: ${message}`));
+          
+          try {
+            const authResult = JSON.parse(message);
+            if (authResult.error && (authResult.error.message === 'Authentication failed' || authResult.error.code === -32002)) {
+              // This is expected behavior for authentication failure
+              ws.close();
+              resolve();
+            } else {
+              reject(new Error(`Expected authentication error, got: ${message}`));
+            }
+          } catch (err) {
+            // If it's not JSON, might be old format
+            if (message === 'AUTH_FAILED') {
+              ws.close();
+              resolve();
+            } else {
+              reject(new Error(`Expected AUTH_FAILED, got: ${message}`));
+            }
           }
         });
 
