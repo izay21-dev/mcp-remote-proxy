@@ -159,7 +159,7 @@ function startServer(options: Options) {
               log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
               isAuthenticated = true;
               
-              // Send auth success response first
+              // Send auth success response 
               ws.send(JSON.stringify({
                 jsonrpc: "2.0",
                 result: {
@@ -169,19 +169,15 @@ function startServer(options: Options) {
                 }
               }));
               
-              // Set up MCP forwarding with a small delay to ensure auth response is sent
+              // Set up MCP forwarding immediately (the client handles message separation)
               messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
+              stdoutListener = (data: Buffer) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(data);
+                }
+              };
               
-              // Use setImmediate to ensure the auth response is sent before we start forwarding
-              setImmediate(() => {
-                stdoutListener = (data: Buffer) => {
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(data);
-                  }
-                };
-                
-                proc.stdout?.on("data", stdoutListener);
-              });
+              proc.stdout?.on("data", stdoutListener);
             } else {
               log("WebSocket client authentication failed");
               ws.send(JSON.stringify({
@@ -470,6 +466,19 @@ function startClient(options: Options) {
       try {
         const message = msg.toString();
         console.error(`[CLIENT] Received message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+        
+        // Don't write authentication responses to stdout - only MCP messages
+        try {
+          const parsedMessage = JSON.parse(message);
+          // Skip authentication responses (they have jsonrpc + result.authenticated)
+          if (parsedMessage.jsonrpc === "2.0" && parsedMessage.result && parsedMessage.result.authenticated !== undefined) {
+            console.error("[CLIENT] Skipping authentication response from stdout");
+            return;
+          }
+        } catch (parseErr) {
+          // If we can't parse it, just pass it through
+        }
+        
         process.stdout.write(message);
       } catch (err) {
         console.error(`[CLIENT] Error writing to stdout: ${err}`);
