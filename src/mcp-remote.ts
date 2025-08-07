@@ -320,7 +320,36 @@ function startClient(options: Options) {
     socket.on("data", (data) => {
       const message = data.toString();
       console.error(`[CLIENT] TCP received message: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
-      process.stdout.write(data);
+      
+      // Don't write authentication responses to stdout - only MCP messages
+      try {
+        const lines = message.trim().split('\n');
+        let filteredOutput = '';
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          try {
+            const parsedMessage = JSON.parse(line);
+            // Skip authentication responses (they have jsonrpc + result.authenticated)
+            if (parsedMessage.jsonrpc === "2.0" && parsedMessage.result && parsedMessage.result.authenticated !== undefined) {
+              console.error("[CLIENT] TCP skipping authentication response from stdout");
+              continue;
+            }
+          } catch (parseErr) {
+            // If we can't parse it, just pass it through
+          }
+          
+          filteredOutput += line + '\n';
+        }
+        
+        if (filteredOutput) {
+          process.stdout.write(filteredOutput);
+        }
+      } catch (err) {
+        // If filtering fails, just pass through the original data
+        process.stdout.write(data);
+      }
     });
 
     socket.on("error", (err) => {
