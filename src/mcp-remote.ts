@@ -279,6 +279,7 @@ function startClient(options: Options) {
 
   function connectTcp(): net.Socket {
     const socket = net.connect(options.port, options.host || "localhost");
+    let messageQueue: string[] = [];
     
     console.error(`[CLIENT] Initiating TCP connection to ${options.host || "localhost"}:${options.port}`);
     
@@ -298,6 +299,18 @@ function startClient(options: Options) {
               isConnected = true;
               reconnectAttempts = 0;
               currentDelay = options.reconnectDelay || 1000;
+              
+              // Send any queued messages
+              if (messageQueue.length > 0) {
+                console.error(`[CLIENT] TCP sending ${messageQueue.length} queued messages`);
+                while (messageQueue.length > 0) {
+                  const queuedMessage = messageQueue.shift();
+                  if (queuedMessage) {
+                    console.error(`[CLIENT] TCP sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
+                    socket.write(queuedMessage);
+                  }
+                }
+              }
             } else {
               console.error(`[CLIENT] TCP authentication failed: ${authResult.error?.message || 'Unknown error'}`);
               socket.end();
@@ -314,6 +327,18 @@ function startClient(options: Options) {
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
+        
+        // Send any queued messages
+        if (messageQueue.length > 0) {
+          console.error(`[CLIENT] TCP sending ${messageQueue.length} queued messages`);
+          while (messageQueue.length > 0) {
+            const queuedMessage = messageQueue.shift();
+            if (queuedMessage) {
+              console.error(`[CLIENT] TCP sending queued message: ${queuedMessage.substring(0, 100)}${queuedMessage.length > 100 ? '...' : ''}`);
+              socket.write(queuedMessage);
+            }
+          }
+        }
       }
     });
 
@@ -385,8 +410,9 @@ function startClient(options: Options) {
         console.error("[CLIENT] TCP sending message directly");
         socket.write(data);
       } else {
-        console.error("[CLIENT] TCP not connected. Message not sent.");
-        console.error("Not connected. Message not sent.");
+        console.error("[CLIENT] TCP not connected, queueing message");
+        messageQueue.push(message);
+        console.error("Not connected. Message queued.");
       }
     });
 
