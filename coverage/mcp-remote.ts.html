@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/486</span>
+                <span class='fraction'>0/487</span>
             </div>
         
             
@@ -39,14 +39,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/56</span>
+                <span class='fraction'>0/57</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/481</span>
+                <span class='fraction'>0/482</span>
             </div>
         
             
@@ -964,7 +964,11 @@
 <a name='L899'></a><a href='#L899'>899</a>
 <a name='L900'></a><a href='#L900'>900</a>
 <a name='L901'></a><a href='#L901'>901</a>
-<a name='L902'></a><a href='#L902'>902</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L902'></a><a href='#L902'>902</a>
+<a name='L903'></a><a href='#L903'>903</a>
+<a name='L904'></a><a href='#L904'>904</a>
+<a name='L905'></a><a href='#L905'>905</a>
+<a name='L906'></a><a href='#L906'>906</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -1137,13 +1141,17 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -2026,7 +2034,7 @@ function <span class="fstat-no" title="function not covered" >startServer(</span
 <span class="cstat-no" title="statement not covered" >              log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);</span>
 <span class="cstat-no" title="statement not covered" >              isAuthenticated = true;</span>
               
-              // Send auth success response
+              // Send auth success response first
 <span class="cstat-no" title="statement not covered" >              ws.send(JSON.stringify({</span>
                 jsonrpc: "2.0",
                 result: {
@@ -2036,15 +2044,19 @@ function <span class="fstat-no" title="function not covered" >startServer(</span
                 }
               }));
               
-              // Set up MCP forwarding
+              // Set up MCP forwarding with a small delay to ensure auth response is sent
 <span class="cstat-no" title="statement not covered" >              messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);</span>
-<span class="cstat-no" title="statement not covered" >              stdoutListener = <span class="fstat-no" title="function not covered" >(d</span>ata: Buffer) =&gt; {</span>
-<span class="cstat-no" title="statement not covered" >                if (ws.readyState === WebSocket.OPEN) {</span>
-<span class="cstat-no" title="statement not covered" >                  ws.send(data);</span>
-                }
-              };
               
-<span class="cstat-no" title="statement not covered" >              proc.stdout?.on("data", stdoutListener);</span>
+              // Use setImmediate to ensure the auth response is sent before we start forwarding
+<span class="cstat-no" title="statement not covered" >              setImmediate(<span class="fstat-no" title="function not covered" >() =</span>&gt; {</span>
+<span class="cstat-no" title="statement not covered" >                stdoutListener = <span class="fstat-no" title="function not covered" >(d</span>ata: Buffer) =&gt; {</span>
+<span class="cstat-no" title="statement not covered" >                  if (ws.readyState === WebSocket.OPEN) {</span>
+<span class="cstat-no" title="statement not covered" >                    ws.send(data);</span>
+                  }
+                };
+                
+<span class="cstat-no" title="statement not covered" >                proc.stdout?.on("data", stdoutListener);</span>
+              });
             } else {
 <span class="cstat-no" title="statement not covered" >              log("WebSocket client authentication failed");</span>
 <span class="cstat-no" title="statement not covered" >              ws.send(JSON.stringify({</span>
@@ -2773,7 +2785,7 @@ else <span class="cstat-no" title="statement not covered" >if (options.mode === 
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-08-06T23:49:29.536Z
+                at 2025-08-07T00:08:25.581Z
             </div>
         <script src="prettify.js"></script>
         <script>

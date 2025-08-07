@@ -159,7 +159,7 @@ function startServer(options: Options) {
               log(`WebSocket client authenticated - User: ${payload.user || "anonymous"}, Roles: ${payload.roles?.join(",") || "none"}`);
               isAuthenticated = true;
               
-              // Send auth success response
+              // Send auth success response first
               ws.send(JSON.stringify({
                 jsonrpc: "2.0",
                 result: {
@@ -169,15 +169,19 @@ function startServer(options: Options) {
                 }
               }));
               
-              // Set up MCP forwarding
+              // Set up MCP forwarding with a small delay to ensure auth response is sent
               messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
-              stdoutListener = (data: Buffer) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(data);
-                }
-              };
               
-              proc.stdout?.on("data", stdoutListener);
+              // Use setImmediate to ensure the auth response is sent before we start forwarding
+              setImmediate(() => {
+                stdoutListener = (data: Buffer) => {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(data);
+                  }
+                };
+                
+                proc.stdout?.on("data", stdoutListener);
+              });
             } else {
               log("WebSocket client authentication failed");
               ws.send(JSON.stringify({
