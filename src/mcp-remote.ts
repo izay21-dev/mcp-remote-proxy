@@ -81,8 +81,10 @@ function startServer(options: Options) {
       log("TCP client connected");
       activeConnections.add(socket);
       
-      // Set socket timeout for idle detection
-      socket.setTimeout(60000); // 60 second idle timeout
+      // Configure socket for better Claude Desktop compatibility
+      socket.setTimeout(300000); // 5 minute idle timeout (increased from 2 minutes)
+      socket.setKeepAlive(true, 60000); // Enable keepalive with 60 second interval
+      socket.setNoDelay(true); // Disable Nagle algorithm for faster response times
       
       socket.on('timeout', () => {
         log("TCP socket idle timeout - closing connection");
@@ -120,15 +122,34 @@ function startServer(options: Options) {
             
             const messageFilter = createMessageFilter(payload.roles || [], permissionsConfig);
             
-            proc.stdout?.pipe(socket);
+            // Handle server responses with better error handling and buffering
+            proc.stdout?.on('data', (data) => {
+              try {
+                socket.write(data);
+              } catch (err) {
+                log(`Error writing to TCP socket: ${err}`);
+                socket.destroy();
+              }
+            });
             
             // Filter client messages to server
             socket.on("data", (data) => {
               const result = messageFilter(data);
               if (result.allowed && result.filteredData) {
-                proc.stdin?.write(result.filteredData);
+                if (proc.stdin && !proc.stdin.destroyed) {
+                  try {
+                    proc.stdin.write(result.filteredData);
+                  } catch (err) {
+                    log(`Error writing to process stdin: ${err}`);
+                  }
+                }
               } else if (result.response) {
-                socket.write(result.response);
+                try {
+                  socket.write(result.response);
+                } catch (err) {
+                  log(`Error writing response to TCP socket: ${err}`);
+                  socket.destroy();
+                }
               }
             });
           } else {
@@ -145,8 +166,25 @@ function startServer(options: Options) {
           }
         });
       } else {
-        proc.stdout?.pipe(socket);
-        socket.pipe(proc.stdin!);
+        // Handle no-auth connections with same error handling
+        proc.stdout?.on('data', (data) => {
+          try {
+            socket.write(data);
+          } catch (err) {
+            log(`Error writing to TCP socket: ${err}`);
+            socket.destroy();
+          }
+        });
+        
+        socket.on('data', (data) => {
+          if (proc.stdin && !proc.stdin.destroyed) {
+            try {
+              proc.stdin.write(data);
+            } catch (err) {
+              log(`Error writing to process stdin: ${err}`);
+            }
+          }
+        });
       }
 
       socket.on("close", () => {
