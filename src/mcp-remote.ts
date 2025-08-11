@@ -18,6 +18,8 @@ import { Options } from "./types.js";
 function startServer(options: Options) {
   const proc = spawn(options.command, options.args, { stdio: "pipe" });
   let permissionsConfig: PermissionsConfig | null = null;
+  const activeConnections = new Set<Socket | WebSocket>();
+  let heartbeatInterval: NodeJS.Timeout;
 
   if (options.permissionsConfig) {
     permissionsConfig = loadPermissionsConfig(options.permissionsConfig);
@@ -37,9 +39,55 @@ function startServer(options: Options) {
     process.stderr.write(data);
   });
 
+  // Cleanup function for dead connections
+  const cleanupDeadConnections = () => {
+    activeConnections.forEach((conn) => {
+      if (conn instanceof Socket) {
+        if (conn.destroyed || !conn.readable || !conn.writable) {
+          log("Removing dead TCP connection");
+          activeConnections.delete(conn);
+        }
+      } else if (conn instanceof WebSocket) {
+        if (conn.readyState === WebSocket.CLOSED || conn.readyState === WebSocket.CLOSING) {
+          log("Removing dead WebSocket connection");
+          activeConnections.delete(conn);
+        }
+      }
+    });
+    
+    if (activeConnections.size === 0) {
+      log("No active connections remaining");
+    }
+  };
+
+  // Start heartbeat to detect dead connections
+  heartbeatInterval = setInterval(cleanupDeadConnections, 30000); // Every 30 seconds
+
+  // Cleanup on process exit
+  process.on("SIGINT", () => {
+    clearInterval(heartbeatInterval);
+    proc.kill();
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", () => {
+    clearInterval(heartbeatInterval);
+    proc.kill();
+    process.exit(0);
+  });
+
   if (options.protocol === "tcp") {
     const server = net.createServer((socket) => {
       log("TCP client connected");
+      activeConnections.add(socket);
+      
+      // Set socket timeout for idle detection
+      socket.setTimeout(60000); // 60 second idle timeout
+      
+      socket.on('timeout', () => {
+        log("TCP socket idle timeout - closing connection");
+        socket.destroy();
+      });
       
       if (options.jwtSecret) {
         // Wait for JWT token from client
@@ -103,6 +151,12 @@ function startServer(options: Options) {
 
       socket.on("close", () => {
         log("TCP client disconnected");
+        activeConnections.delete(socket);
+      });
+
+      socket.on("error", (err) => {
+        log(`TCP client error: ${err.message}`);
+        activeConnections.delete(socket);
       });
     });
 
@@ -115,10 +169,23 @@ function startServer(options: Options) {
 
     wss.on("connection", (ws) => {
       log("WebSocket client connected");
+      activeConnections.add(ws);
       let authTimeout: NodeJS.Timeout;
       let isAuthenticated = false;
       let messageFilter: any;
       let stdoutListener: any;
+      let pingInterval: NodeJS.Timeout;
+
+      // Set up ping-pong for connection health
+      const startPingInterval = () => {
+        pingInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.ping();
+          } else {
+            clearInterval(pingInterval);
+          }
+        }, 30000); // Ping every 30 seconds
+      };
 
       if (options.jwtSecret) {
         // Set authentication timeout
@@ -178,6 +245,7 @@ function startServer(options: Options) {
               };
               
               proc.stdout?.on("data", stdoutListener);
+              startPingInterval();
             } else {
               log("WebSocket client authentication failed");
               ws.send(JSON.stringify({
@@ -212,7 +280,9 @@ function startServer(options: Options) {
 
         ws.on("close", () => {
           clearTimeout(authTimeout);
+          clearInterval(pingInterval);
           log("WebSocket client disconnected");
+          activeConnections.delete(ws);
           if (stdoutListener) {
             proc.stdout?.off("data", stdoutListener);
           }
@@ -220,10 +290,16 @@ function startServer(options: Options) {
 
         ws.on("error", (err) => {
           clearTimeout(authTimeout);
+          clearInterval(pingInterval);
           log(`WebSocket client error: ${err.message}`);
+          activeConnections.delete(ws);
           if (stdoutListener) {
             proc.stdout?.off("data", stdoutListener);
           }
+        });
+
+        ws.on("pong", () => {
+          log("WebSocket pong received");
         });
       } else {
         const stdoutListener = (data: Buffer) => {
@@ -244,17 +320,26 @@ function startServer(options: Options) {
 
         proc.stdout?.on("data", stdoutListener);
         ws.on("message", messageListener);
+        startPingInterval();
 
         ws.on("close", () => {
           log("WebSocket client disconnected");
+          activeConnections.delete(ws);
+          clearInterval(pingInterval);
           proc.stdout?.off("data", stdoutListener);
           ws.off("message", messageListener);
         });
 
         ws.on("error", (err) => {
           log(`WebSocket client error: ${err.message}`);
+          activeConnections.delete(ws);
+          clearInterval(pingInterval);
           proc.stdout?.off("data", stdoutListener);
           ws.off("message", messageListener);
+        });
+
+        ws.on("pong", () => {
+          log("WebSocket pong received");
         });
       }
     });
@@ -272,14 +357,91 @@ function startClient(options: Options) {
   let currentDelay = options.reconnectDelay || 1000;
   let isConnected = false;
   let shouldReconnect = true;
+  let connectionHealthInterval: NodeJS.Timeout;
+  let currentConnection: net.Socket | WebSocket | null = null;
+  let periodicRetryInterval: NodeJS.Timeout;
+
+  // Enable auto-reconnect by default
+  if (options.autoReconnect === undefined) {
+    options.autoReconnect = true;
+  }
+  
+  // Increase max attempts significantly for persistent connections
+  if (options.maxReconnectAttempts === undefined) {
+    options.maxReconnectAttempts = 50; // Much higher for persistent reconnection
+  }
 
   function calculateCurrentBackoffDelay(attempt: number): number {
     return calculateBackoffDelay(attempt, currentDelay);
   }
 
+  // Health check function to detect dead connections
+  const startConnectionHealthCheck = () => {
+    connectionHealthInterval = setInterval(() => {
+      if (currentConnection) {
+        if (currentConnection instanceof net.Socket) {
+          if (currentConnection.destroyed || !currentConnection.readable || !currentConnection.writable) {
+            console.error("[CLIENT] TCP connection health check failed - connection is dead");
+            isConnected = false;
+            currentConnection.destroy();
+          }
+        } else if (currentConnection instanceof WebSocket) {
+          if (currentConnection.readyState === WebSocket.CLOSED || currentConnection.readyState === WebSocket.CLOSING) {
+            console.error("[CLIENT] WebSocket connection health check failed - connection is dead");
+            isConnected = false;
+            currentConnection.terminate();
+          } else if (currentConnection.readyState === WebSocket.OPEN) {
+            // Send ping to verify connection is still alive
+            try {
+              currentConnection.ping();
+            } catch (err) {
+              console.error("[CLIENT] Failed to send ping, connection may be dead");
+              isConnected = false;
+            }
+          }
+        }
+      }
+    }, 30000); // Check every 30 seconds
+  };
+
+  const stopConnectionHealthCheck = () => {
+    if (connectionHealthInterval) {
+      clearInterval(connectionHealthInterval);
+    }
+  };
+
+  // Start periodic retry after max attempts are exhausted
+  const startPeriodicRetry = () => {
+    console.error("[CLIENT] Max reconnection attempts reached. Starting periodic retry every 5 minutes...");
+    periodicRetryInterval = setInterval(() => {
+      if (!isConnected && shouldReconnect) {
+        console.error("[CLIENT] Periodic retry: Attempting to reconnect...");
+        reconnectAttempts = 0; // Reset attempts counter for fresh try
+        currentDelay = options.reconnectDelay || 1000; // Reset delay
+        
+        if (options.protocol === "tcp") {
+          connectTcp();
+        } else if (options.protocol === "ws") {
+          connectWs();
+        }
+      } else if (isConnected) {
+        // If we're connected, stop the periodic retry
+        console.error("[CLIENT] Connection restored, stopping periodic retry");
+        clearInterval(periodicRetryInterval);
+      }
+    }, 5 * 60 * 1000); // Every 5 minutes
+  };
+
+  const stopPeriodicRetry = () => {
+    if (periodicRetryInterval) {
+      clearInterval(periodicRetryInterval);
+    }
+  };
+
   function connectTcp(): net.Socket {
     const socket = net.connect(options.port, options.host || "localhost");
     let messageQueue: string[] = [];
+    currentConnection = socket;
     
     console.error(`[CLIENT] Initiating TCP connection to ${options.host || "localhost"}:${options.port}`);
     
@@ -299,6 +461,8 @@ function startClient(options: Options) {
               isConnected = true;
               reconnectAttempts = 0;
               currentDelay = options.reconnectDelay || 1000;
+              stopPeriodicRetry(); // Stop any periodic retry
+              startConnectionHealthCheck();
               
               // Send any queued messages
               if (messageQueue.length > 0) {
@@ -327,6 +491,8 @@ function startClient(options: Options) {
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
+        stopPeriodicRetry(); // Stop any periodic retry
+        startConnectionHealthCheck();
         
         // Send any queued messages
         if (messageQueue.length > 0) {
@@ -380,11 +546,13 @@ function startClient(options: Options) {
     socket.on("error", (err) => {
       console.error(`[CLIENT] TCP connection error (connected: ${isConnected}): ${err.message}`);
       isConnected = false;
+      stopConnectionHealthCheck();
     });
 
     socket.on("close", () => {
       console.error(`[CLIENT] TCP connection closed (was connected: ${isConnected})`);
       isConnected = false;
+      stopConnectionHealthCheck();
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
@@ -396,7 +564,8 @@ function startClient(options: Options) {
           connectTcp();
         }, delay);
       } else if (shouldReconnect && options.autoReconnect) {
-        console.error("[CLIENT] TCP max reconnection attempts reached. Giving up.");
+        console.error("[CLIENT] TCP max reconnection attempts reached. Starting periodic retry...");
+        startPeriodicRetry();
       }
     });
 
@@ -426,6 +595,7 @@ function startClient(options: Options) {
     });
     let messageQueue: string[] = [];
     let connectionTimeout: NodeJS.Timeout;
+    currentConnection = ws;
 
     console.error(`[CLIENT] Initiating WebSocket connection to ${options.host || "localhost"}:${options.port}`);
 
@@ -454,6 +624,8 @@ function startClient(options: Options) {
               isConnected = true;
               reconnectAttempts = 0;
               currentDelay = options.reconnectDelay || 1000;
+              stopPeriodicRetry(); // Stop any periodic retry
+              startConnectionHealthCheck();
               
               // Set up periodic ping to keep connection alive
               const pingInterval = setInterval(() => {
@@ -492,6 +664,8 @@ function startClient(options: Options) {
         isConnected = true;
         reconnectAttempts = 0;
         currentDelay = options.reconnectDelay || 1000;
+        stopPeriodicRetry(); // Stop any periodic retry
+        startConnectionHealthCheck();
         
         // Set up periodic ping to keep connection alive
         const pingInterval = setInterval(() => {
@@ -549,6 +723,7 @@ function startClient(options: Options) {
       console.error(`[CLIENT] WebSocket state: ${ws.readyState} (CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3)`);
       clearTimeout(connectionTimeout);
       isConnected = false;
+      stopConnectionHealthCheck();
     });
 
     ws.on("close", (code, reason) => {
@@ -556,6 +731,7 @@ function startClient(options: Options) {
       console.error(`[CLIENT] WebSocket state: ${ws.readyState}, queued messages: ${messageQueue.length}`);
       clearTimeout(connectionTimeout);
       isConnected = false;
+      stopConnectionHealthCheck();
       
       if (shouldReconnect && options.autoReconnect && reconnectAttempts < (options.maxReconnectAttempts || 5)) {
         const delay = calculateCurrentBackoffDelay(reconnectAttempts);
@@ -567,7 +743,8 @@ function startClient(options: Options) {
           connectWs();
         }, delay);
       } else if (shouldReconnect && options.autoReconnect) {
-        console.error("[CLIENT] Max reconnection attempts reached. Giving up.");
+        console.error("[CLIENT] Max reconnection attempts reached. Starting periodic retry...");
+        startPeriodicRetry();
       }
     });
 
@@ -604,6 +781,15 @@ function startClient(options: Options) {
 
   process.on("SIGINT", () => {
     shouldReconnect = false;
+    stopConnectionHealthCheck();
+    stopPeriodicRetry();
+    if (currentConnection) {
+      if (currentConnection instanceof net.Socket) {
+        currentConnection.destroy();
+      } else if (currentConnection instanceof WebSocket) {
+        currentConnection.terminate();
+      }
+    }
     console.error("\nShutting down...");
     process.exit(0);
   });
